@@ -1,31 +1,33 @@
 /**
- * Salas en memoria y sesiones de jugador.
+ * Salas en memoria.
  *
- * No hay base de datos a propósito: es una partida casera entre amigos. Si el
- * servidor se reinicia, las mesas se pierden. A cambio, el deploy es un solo
- * proceso sin infraestructura alrededor.
+ * Las mesas en curso no se guardan en la base a propósito: si el servidor se
+ * reinicia, se pierden. Lo que sí sobrevive son las cuentas y los resultados
+ * de cada mano, que es lo que alimenta el ranking.
+ *
+ * La identidad del jugador sale de su cuenta, así que reconectar es trivial:
+ * el mismo usuario siempre tiene el mismo `playerId` y vuelve a su asiento.
  */
 
-import {
-  type ChatMessage,
-  type TableSettings,
-  sanitizeChat,
-  sanitizeName,
-} from '@puker/shared';
+import { type ChatMessage, type TableSettings, sanitizeChat } from '@puker/shared';
 
-import { makeRoomCode, makeToken } from './rng.js';
-import { Table } from './table.js';
+import { makeRoomCode } from './rng.js';
+import { Table, type HandRecord } from './table.js';
 
 /** Sala vacía más de esto se borra sola. */
 const IDLE_ROOM_TTL_MS = 2 * 60 * 60 * 1000;
 const MAX_ROOMS = 200;
 const CHAT_HISTORY = 80;
 
-export interface Session {
+export interface PlayerIdentity {
   playerId: string;
-  token: string;
+  userId: number;
   name: string;
-  roomCode: string;
+}
+
+/** El asiento se ata a la cuenta: reconectar siempre te devuelve el tuyo. */
+export function identityOf(user: { id: number; display_name: string }): PlayerIdentity {
+  return { playerId: `u${user.id}`, userId: user.id, name: user.display_name };
 }
 
 export interface Room {
@@ -38,14 +40,14 @@ export interface Room {
 
 export interface JoinOutcome {
   room: Room;
-  session: Session;
-  resumed: boolean;
   seated: boolean;
 }
 
 export class RoomManager {
   private rooms = new Map<string, Room>();
-  private sessionsByToken = new Map<string, Session>();
+
+  /** Se invoca al cerrar cada mano en cualquier mesa. Lo cablea el servidor. */
+  onHandComplete: ((record: HandRecord) => void) | null = null;
 
   get size(): number {
     return this.rooms.size;
@@ -63,16 +65,18 @@ export class RoomManager {
     return [...this.rooms.keys()];
   }
 
-  create(rawName: string, settings?: Partial<TableSettings>): JoinOutcome {
+  create(player: PlayerIdentity, settings?: Partial<TableSettings>): JoinOutcome {
     if (this.rooms.size >= MAX_ROOMS) {
       this.cleanup();
       if (this.rooms.size >= MAX_ROOMS) throw new Error('El servidor está lleno, probá más tarde');
     }
 
-    const name = requireName(rawName);
     const code = this.freshCode();
+    const table = new Table(code, settings);
+    table.onHandComplete = (record) => this.onHandComplete?.(record);
+
     const room: Room = {
-      table: new Table(code, settings),
+      table,
       chat: [],
       chatSeq: 0,
       createdAt: Date.now(),
@@ -80,71 +84,37 @@ export class RoomManager {
     };
     this.rooms.set(code, room);
 
-    const session = this.newSession(name, code);
-    room.table.sit(session.playerId, session.name);
-    return { room, session, resumed: false, seated: true };
+    table.sit(player.playerId, player.name, undefined, player.userId);
+    return { room, seated: true };
   }
 
-  /**
-   * Entra a una sala. Si llega un token conocido, recupera la sesión anterior
-   * (y con ella el asiento y las fichas) en lugar de crear un jugador nuevo.
-   */
-  join(rawCode: string, rawName: string, token?: string): JoinOutcome {
+  join(rawCode: string, player: PlayerIdentity): JoinOutcome {
     const code = normalizeCode(rawCode);
     const room = this.rooms.get(code);
     if (!room) throw new Error('No existe ninguna sala con ese código');
 
-    const name = requireName(rawName);
     room.lastActivityAt = Date.now();
 
-    const existing = token ? this.sessionsByToken.get(token) : undefined;
-    if (existing && existing.roomCode === code) {
-      existing.name = name;
-      const seat = room.table.seatOf(existing.playerId);
-      if (seat) {
-        room.table.sit(existing.playerId, name);
-        return { room, session: existing, resumed: true, seated: true };
-      }
-      // La sesión existe pero perdió el asiento (lo liberó el grace period).
-      const seated = this.trySit(room, existing);
-      return { room, session: existing, resumed: true, seated };
-    }
-
-    const session = this.newSession(name, code);
-    const seated = this.trySit(room, session);
-    return { room, session, resumed: false, seated };
-  }
-
-  private trySit(room: Room, session: Session): boolean {
     try {
-      room.table.sit(session.playerId, session.name);
-      return true;
+      room.table.sit(player.playerId, player.name, undefined, player.userId);
+      return { room, seated: true };
     } catch {
-      // Mesa llena: entra como espectador.
-      return false;
+      // Mesa llena: entra como espectador y se sienta cuando se libere un lugar.
+      return { room, seated: false };
     }
-  }
-
-  sessionByToken(token: string): Session | undefined {
-    return this.sessionsByToken.get(token);
   }
 
   addChat(room: Room, from: string, rawText: string): ChatMessage | null {
     const text = sanitizeChat(rawText);
     if (!text) return null;
-    const message: ChatMessage = {
-      id: ++room.chatSeq,
-      at: Date.now(),
-      from,
-      text,
-    };
+    const message: ChatMessage = { id: ++room.chatSeq, at: Date.now(), from, text };
     room.chat.push(message);
     if (room.chat.length > CHAT_HISTORY) room.chat.splice(0, room.chat.length - CHAT_HISTORY);
     room.lastActivityAt = Date.now();
     return message;
   }
 
-  /** Borra salas vacías y viejas, y las sesiones que quedaron colgadas. */
+  /** Borra las salas vacías y viejas. */
   cleanup(now = Date.now()): string[] {
     const removed: string[] = [];
     for (const [code, room] of this.rooms) {
@@ -155,24 +125,7 @@ export class RoomManager {
         removed.push(code);
       }
     }
-
-    if (removed.length) {
-      for (const [token, session] of this.sessionsByToken) {
-        if (!this.rooms.has(session.roomCode)) this.sessionsByToken.delete(token);
-      }
-    }
     return removed;
-  }
-
-  private newSession(name: string, roomCode: string): Session {
-    const session: Session = {
-      playerId: `p_${makeToken().slice(0, 12)}`,
-      token: makeToken(),
-      name,
-      roomCode,
-    };
-    this.sessionsByToken.set(session.token, session);
-    return session;
   }
 
   private freshCode(): string {
@@ -187,10 +140,4 @@ export class RoomManager {
 
 export function normalizeCode(code: string): string {
   return String(code ?? '').trim().toUpperCase().slice(0, 8);
-}
-
-function requireName(raw: string): string {
-  const name = sanitizeName(String(raw ?? ''));
-  if (name.length < 2) throw new Error('El nombre tiene que tener al menos 2 caracteres');
-  return name;
 }

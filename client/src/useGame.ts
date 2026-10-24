@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { type Socket, io } from 'socket.io-client';
 
 import type {
@@ -20,13 +20,9 @@ interface AckEmitter {
   emit(event: string, payload: unknown, ack: (res: Ack<unknown>) => void): void;
 }
 
-const STORAGE = {
-  name: 'puker.name',
-  token: 'puker.token',
-  room: 'puker.room',
-  muted: 'puker.muted',
-} as const;
-
+/** Solo se recuerda la última sala, para volver sola al recargar. */
+const ROOM_KEY = 'puker.room';
+const MUTED_KEY = 'puker.muted';
 const ACK_TIMEOUT_MS = 10_000;
 
 function read(key: string): string | null {
@@ -76,14 +72,15 @@ export interface GameApi {
   connected: boolean;
   busy: boolean;
   toasts: Toast[];
-  savedName: string;
   savedRoom: string;
   muted: boolean;
+  /** Socket vivo, para que la voz use la misma conexión. */
+  socket: GameSocket | null;
 
-  createRoom(name: string, settings?: Partial<TableSettings>): Promise<void>;
-  joinRoom(code: string, name: string): Promise<void>;
+  createRoom(settings?: Partial<TableSettings>): Promise<void>;
+  joinRoom(code: string): Promise<void>;
   exitRoom(): void;
-  act(action: PlayerAction): Promise<void>;
+  act(action: PlayerAction): void;
   startGame(): Promise<void>;
   pauseGame(): Promise<void>;
   setSitOut(sitOut: boolean): Promise<void>;
@@ -97,7 +94,7 @@ export interface GameApi {
   notify(kind: Toast['kind'], text: string): void;
 }
 
-export function useGame(): GameApi {
+export function useGame(signedIn: boolean): GameApi {
   const [screen, setScreen] = useState<'lobby' | 'table'>('lobby');
   const [state, setState] = useState<GameState | null>(null);
   const [turnDeadline, setTurnDeadline] = useState<number | null>(null);
@@ -106,15 +103,15 @@ export function useGame(): GameApi {
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [muted, setMuted] = useState(() => read(STORAGE.muted) === '1');
+  const [muted, setMuted] = useState(() => read(MUTED_KEY) === '1');
+  const [socket, setSocket] = useState<GameSocket | null>(null);
 
   const socketRef = useRef<GameSocket | null>(null);
-  const sessionRef = useRef<{ code: string; name: string; token: string } | null>(null);
+  const roomRef = useRef<string | null>(null);
   const rejoinRef = useRef(false);
   const toastSeq = useRef(0);
 
-  const savedName = useMemo(() => read(STORAGE.name) ?? '', []);
-  const savedRoom = useMemo(() => read(STORAGE.room) ?? '', []);
+  const savedRoom = read(ROOM_KEY) ?? '';
 
   const notify = useCallback((kind: Toast['kind'], text: string) => {
     const id = ++toastSeq.current;
@@ -126,100 +123,93 @@ export function useGame(): GameApi {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
+  const forgetRoom = useCallback(() => {
+    rejoinRef.current = false;
+    roomRef.current = null;
+    write(ROOM_KEY, null);
+    setScreen('lobby');
+    setState(null);
+  }, []);
+
   /** Crea el socket una sola vez y engancha los listeners. */
   const ensureSocket = useCallback((): GameSocket => {
     if (socketRef.current) return socketRef.current;
 
-    const socket: GameSocket = io({
+    const created: GameSocket = io({
       transports: ['websocket', 'polling'],
+      withCredentials: true,
       reconnectionDelay: 500,
       reconnectionDelayMax: 4000,
     });
-    socketRef.current = socket;
+    socketRef.current = created;
+    setSocket(created);
 
-    socket.on('connect', () => {
+    created.on('connect', () => {
       setConnected(true);
-      // Tras una reconexión el servidor ya no sabe quiénes somos: hay que
-      // volver a entrar a la sala con el mismo token para recuperar el asiento.
-      const session = sessionRef.current;
-      if (rejoinRef.current && session) {
-        emitAck<JoinResult>(socket, 'room:join', {
-          code: session.code,
-          name: session.name,
-          token: session.token,
-        }).catch((error: unknown) => {
+      // Tras reconectar, el servidor ya no sabe en qué sala estábamos.
+      const code = roomRef.current;
+      if (rejoinRef.current && code) {
+        emitAck<JoinResult>(created, 'room:join', { code }).catch((error: unknown) => {
           notify('error', error instanceof Error ? error.message : 'No pudimos volver a la mesa');
-          rejoinRef.current = false;
-          sessionRef.current = null;
-          write(STORAGE.token, null);
-          write(STORAGE.room, null);
-          setScreen('lobby');
-          setState(null);
+          forgetRoom();
         });
       }
     });
 
-    socket.on('disconnect', () => setConnected(false));
+    created.on('disconnect', () => setConnected(false));
 
-    socket.on('state', (next) => {
+    created.on('connect_error', (error) => {
+      setConnected(false);
+      if (/sesi|session/i.test(error.message)) {
+        notify('error', 'Tu sesión venció. Volvé a entrar.');
+      }
+    });
+
+    created.on('state', (next) => {
       setState(next);
       setTurnDeadline(
         next.turnEndsAt === null ? null : Date.now() + (next.turnEndsAt - next.serverNow),
       );
     });
 
-    socket.on('log', (entries) => {
+    created.on('log', (entries) => {
       setLogs((prev) => {
         const seen = new Set(prev.map((e) => e.id));
-        const merged = [...prev, ...entries.filter((e) => !seen.has(e.id))];
-        return merged.slice(-120);
+        return [...prev, ...entries.filter((e) => !seen.has(e.id))].slice(-120);
       });
     });
 
-    socket.on('chat', (message) => {
-      setChat((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message].slice(-60)));
+    created.on('chat', (message) => {
+      setChat((prev) =>
+        prev.some((m) => m.id === message.id) ? prev : [...prev, message].slice(-60),
+      );
     });
 
-    socket.on('toast', ({ kind, text }) => notify(kind, text));
+    created.on('toast', ({ kind, text }) => notify(kind, text));
 
-    socket.on('kicked', ({ reason }) => {
+    created.on('kicked', ({ reason }) => {
       notify('error', reason);
-      sessionRef.current = null;
-      rejoinRef.current = false;
-      write(STORAGE.token, null);
-      write(STORAGE.room, null);
-      setScreen('lobby');
-      setState(null);
+      forgetRoom();
     });
 
-    socket.on('connect_error', () => {
-      setConnected(false);
-    });
+    return created;
+  }, [notify, forgetRoom]);
 
-    return socket;
-  }, [notify]);
-
-  const enterRoom = useCallback(
-    (result: JoinResult, name: string) => {
-      sessionRef.current = { code: result.code, name, token: result.token };
-      rejoinRef.current = true;
-      write(STORAGE.name, name);
-      write(STORAGE.token, result.token);
-      write(STORAGE.room, result.code);
-      setScreen('table');
-    },
-    [],
-  );
+  const enterRoom = useCallback((code: string) => {
+    roomRef.current = code;
+    rejoinRef.current = true;
+    write(ROOM_KEY, code);
+    setScreen('table');
+  }, []);
 
   const createRoom = useCallback(
-    async (name: string, settings?: Partial<TableSettings>) => {
+    async (settings?: Partial<TableSettings>) => {
       setBusy(true);
       try {
-        const socket = ensureSocket();
-        const result = await emitAck<JoinResult>(socket, 'room:create', { name, settings });
+        const result = await emitAck<JoinResult>(ensureSocket(), 'room:create', { settings });
         setLogs([]);
         setChat([]);
-        enterRoom(result, name);
+        enterRoom(result.code);
       } finally {
         setBusy(false);
       }
@@ -228,21 +218,16 @@ export function useGame(): GameApi {
   );
 
   const joinRoom = useCallback(
-    async (code: string, name: string) => {
+    async (code: string) => {
       setBusy(true);
       try {
-        const socket = ensureSocket();
         const normalized = code.trim().toUpperCase();
-        // Reusamos el token solo si volvemos a la misma sala.
-        const token = read(STORAGE.room) === normalized ? read(STORAGE.token) : null;
-        const result = await emitAck<JoinResult>(socket, 'room:join', {
+        const result = await emitAck<JoinResult>(ensureSocket(), 'room:join', {
           code: normalized,
-          name,
-          token: token ?? undefined,
         });
         setLogs([]);
         setChat([]);
-        enterRoom(result, name);
+        enterRoom(result.code);
       } finally {
         setBusy(false);
       }
@@ -253,10 +238,10 @@ export function useGame(): GameApi {
   /** Acción del jugador; los errores se muestran como toast y no rompen la UI. */
   const send = useCallback(
     async (event: string, payload: unknown = {}) => {
-      const socket = socketRef.current;
-      if (!socket) throw new Error('Sin conexión');
+      const current = socketRef.current;
+      if (!current) throw new Error('Sin conexión');
       try {
-        await emitAck<undefined>(socket, event, payload);
+        await emitAck<undefined>(current, event, payload);
       } catch (error) {
         notify('error', error instanceof Error ? error.message : 'No se pudo completar la acción');
         throw error;
@@ -265,39 +250,40 @@ export function useGame(): GameApi {
     [notify],
   );
 
-  const act = useCallback((action: PlayerAction) => send('game:action', action).catch(() => {}), [send]);
+  const act = useCallback(
+    (action: PlayerAction) => {
+      void send('game:action', action).catch(() => {});
+    },
+    [send],
+  );
 
   const exitRoom = useCallback(() => {
-    const socket = socketRef.current;
-    if (socket) {
+    const current = socketRef.current;
+    if (current) {
       rejoinRef.current = false;
-      void emitAck<undefined>(socket, 'seat:leave', {}).catch(() => {});
-      socket.disconnect();
-      socketRef.current = null;
+      void emitAck<undefined>(current, 'seat:leave', {}).catch(() => {});
     }
-    sessionRef.current = null;
-    write(STORAGE.token, null);
-    write(STORAGE.room, null);
-    setState(null);
+    forgetRoom();
     setLogs([]);
     setChat([]);
-    setScreen('lobby');
-    setConnected(false);
-  }, []);
+  }, [forgetRoom]);
 
   const toggleMuted = useCallback(() => {
     setMuted((prev) => {
-      write(STORAGE.muted, prev ? null : '1');
+      write(MUTED_KEY, prev ? null : '1');
       return !prev;
     });
   }, []);
 
-  // Al abrir la app, si hay una sesión guardada volvemos solos a la mesa.
+  // Con sesión abierta y una sala guardada, volvemos solos a la mesa.
   useEffect(() => {
-    const token = read(STORAGE.token);
-    const code = read(STORAGE.room);
-    const name = read(STORAGE.name);
-    if (!token || !code || !name) return;
+    if (!signedIn) return;
+    const code = read(ROOM_KEY);
+    if (!code) {
+      // Igual conectamos: el lobby necesita el socket para crear salas.
+      ensureSocket();
+      return;
+    }
 
     let cancelled = false;
     (async () => {
@@ -305,21 +291,29 @@ export function useGame(): GameApi {
         const response = await fetch(`/api/rooms/${encodeURIComponent(code)}`);
         if (!response.ok) throw new Error('La mesa ya no existe');
         if (cancelled) return;
-
-        const socket = ensureSocket();
-        const result = await emitAck<JoinResult>(socket, 'room:join', { code, name, token });
+        await emitAck<JoinResult>(ensureSocket(), 'room:join', { code });
         if (cancelled) return;
-        enterRoom(result, name);
+        enterRoom(code);
       } catch {
-        write(STORAGE.token, null);
-        write(STORAGE.room, null);
+        write(ROOM_KEY, null);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [ensureSocket, enterRoom]);
+  }, [signedIn, ensureSocket, enterRoom]);
+
+  // Al cerrar sesión, se corta el socket.
+  useEffect(() => {
+    if (signedIn) return;
+    socketRef.current?.disconnect();
+    socketRef.current = null;
+    setSocket(null);
+    setConnected(false);
+    setState(null);
+    setScreen('lobby');
+  }, [signedIn]);
 
   useEffect(
     () => () => {
@@ -338,9 +332,9 @@ export function useGame(): GameApi {
     connected,
     busy,
     toasts,
-    savedName,
     savedRoom,
     muted,
+    socket,
     createRoom,
     joinRoom,
     exitRoom,

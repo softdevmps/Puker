@@ -1,0 +1,34 @@
+# HTTPS automático con Let's Encrypt. Sin esto el navegador no habilita el
+# micrófono, así que la voz no funcionaría.
+#
+# Caddy saca y renueva el certificado solo: lo único necesario es que el
+# dominio apunte a la IP del servidor y que los puertos 80 y 443 estén abiertos.
+
+{$DOMAIN} {
+	encode gzip zstd
+
+	# Socket.IO necesita que la conexión se pueda promover a websocket.
+	# Caddy ya reenvía los headers de Upgrade, así que alcanza con el proxy.
+	reverse_proxy puker:3001 {
+		health_uri /api/health
+		health_interval 30s
+	}
+
+	header {
+		# El navegador recuerda que este sitio es solo HTTPS.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# El micrófono se habilita solo para el propio sitio.
+		Permissions-Policy "microphone=(self), camera=(), geolocation=()"
+		-Server
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 3
+		}
+	}
+}

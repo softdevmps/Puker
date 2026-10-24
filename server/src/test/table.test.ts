@@ -277,6 +277,51 @@ test('el empate parte el bote y las fichas sobrantes no desaparecen', () => {
   assert.equal(paid, 30, 'el bote eran 15 + 15');
 });
 
+test('mano a mano: si la ciega chica queda all-in al postear, el turno lo abre la grande', () => {
+  // Regresión: el turno se le asignaba a la ciega chica sin verificar que
+  // pudiera actuar, así que una mesa quedaba trabada apuntando a un all-in.
+  const h = makeTable(2, { smallBlind: 10, bigBlind: 20, startingStack: 1000 });
+  h.table.seats[0]!.chips = 10; // justo para la ciega chica y nada más
+  const total = h.totalChips();
+
+  h.table.start(h.ids[0]!);
+
+  const state = h.table.getStateFor(h.ids[0]!);
+  assert.equal(state.dealerSeat, 0, 'el botón arranca en el asiento 0');
+  assert.equal(h.table.seats[0]!.allIn, true, 'se quedó all-in poniendo la ciega');
+  assert.equal(state.turnSeat, 1, 'habla la ciega grande, no el all-in');
+  assert.ok(h.table.legalActions(1), 'y esa ciega grande tiene acciones válidas');
+
+  // La mano se puede terminar sin trabarse.
+  h.act({ type: 'check' });
+  assert.equal(h.table.getStateFor(h.ids[0]!).phase, 'handover');
+  assert.equal(h.totalChips(), total, 'las fichas cuadran');
+});
+
+test('con 3 jugadores, si las ciegas dejan all-in a alguien el turno lo saltea', () => {
+  const h = makeTable(3, { smallBlind: 10, bigBlind: 20, startingStack: 1000 });
+  h.table.seats[1]!.chips = 10; // ciega chica justa
+  h.table.seats[2]!.chips = 20; // ciega grande justa
+  const total = h.totalChips();
+
+  h.table.start(h.ids[0]!);
+
+  const state = h.table.getStateFor(h.ids[0]!);
+  assert.equal(state.turnSeat, 0, 'el único con fichas es el que habla');
+  assert.ok(h.table.legalActions(0), 'y puede actuar');
+
+  let guard = 0;
+  while (h.table.isHandLive() && guard++ < 20) {
+    const playerId = h.current();
+    if (!playerId) break;
+    const legal = h.table.legalActions(seatOf(h, playerId))!;
+    h.table.act(playerId, legal.canCheck ? { type: 'check' } : { type: 'call' });
+  }
+
+  assert.ok(guard < 20, 'la mano no se trabó');
+  assert.equal(h.totalChips(), total);
+});
+
 test('el jugador que se va de la mesa en medio de la mano no bloquea a los demás', () => {
   const h = makeTable(3);
   h.table.start(h.ids[0]!);
@@ -317,9 +362,13 @@ test('el timeout pasa si puede y se retira si no', () => {
 test('se juegan muchas manos al azar sin perder ni inventar fichas', () => {
   const rnd = mulberry32(20261023);
 
-  for (let partida = 0; partida < 12; partida++) {
-    const jugadores = 2 + Math.floor(rnd() * 5);
-    const h = makeTable(jugadores, { startingStack: 500 + Math.floor(rnd() * 1500) });
+  for (let partida = 0; partida < 40; partida++) {
+    const jugadores = 2 + Math.floor(rnd() * 8);
+    // Se mezclan stacks largos con stacks cortísimos a propósito: con 2 o 3
+    // ciegas de stack aparecen los all-in forzados al postear, que es donde
+    // se esconden los casos de borde.
+    const startingStack = partida % 3 === 0 ? 30 + Math.floor(rnd() * 60) : 500 + Math.floor(rnd() * 1500);
+    const h = makeTable(jugadores, { startingStack });
     const total = h.totalChips();
 
     h.table.start(h.ids[0]!);
@@ -371,7 +420,15 @@ test('el bote mostrado siempre coincide con lo que los jugadores comprometieron'
 });
 
 function randomAction(table: Table, seat: number, rnd: () => number): PlayerAction {
-  const legal = table.legalActions(seat)!;
+  const legal = table.legalActions(seat);
+  // Si la mesa dice que es el turno de alguien, ese alguien tiene que poder
+  // actuar. Sin esta comprobación el fuzz moría con un TypeError opaco.
+  assert.ok(
+    legal,
+    `el turno apunta al asiento ${seat} pero no tiene acciones posibles ` +
+      `(folded=${table.seats[seat]?.folded}, allIn=${table.seats[seat]?.allIn}, ` +
+      `chips=${table.seats[seat]?.chips})`,
+  );
   const opciones: PlayerAction[] = [];
 
   if (legal.canCheck) opciones.push({ type: 'check' }, { type: 'check' });

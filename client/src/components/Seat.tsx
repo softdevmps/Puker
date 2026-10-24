@@ -11,9 +11,22 @@ interface Props {
   timeSeconds: number;
   /** Cartas que forman su mejor mano, para resaltarlas en el showdown. */
   bestCards: string[];
+  /** Está conectado al audio de la mesa. */
+  inVoice: boolean;
+  /** Está hablando en este momento. */
+  speaking: boolean;
 }
 
-export function Seat({ player, isHero, isHost, timeFraction, timeSeconds, bestCards }: Props) {
+export function Seat({
+  player,
+  isHero,
+  isHost,
+  timeFraction,
+  timeSeconds,
+  bestCards,
+  inVoice,
+  speaking,
+}: Props) {
   const classes = ['seat'];
   if (isHero) classes.push('seat--hero');
   if (player.isTurn) classes.push('seat--turn');
@@ -21,6 +34,7 @@ export function Seat({ player, isHero, isHost, timeFraction, timeSeconds, bestCa
   if (player.status === 'sitting-out') classes.push('seat--out');
   if (!player.connected) classes.push('seat--offline');
   if (player.wonLast > 0) classes.push('seat--winner');
+  if (speaking) classes.push('seat--speaking');
 
   // Las cartas propias se muestran más grandes: son las que mirás todo el tiempo.
   const cardSize = isHero ? 'lg' : 'sm';
@@ -44,6 +58,15 @@ export function Seat({ player, isHero, isHost, timeFraction, timeSeconds, bestCa
 
       <div className="seat__body">
         <div className="seat__head">
+          {inVoice ? (
+            <span
+              className={`seat__mic${speaking ? ' seat__mic--on' : ''}`}
+              title={speaking ? 'Hablando' : 'Conectado al audio'}
+              aria-label={speaking ? 'Hablando' : 'Conectado al audio'}
+            >
+              🎤
+            </span>
+          ) : null}
           <span className="seat__name" title={player.name}>
             {player.name}
             {isHost ? <span className="seat__host" title="Anfitrión">★</span> : null}

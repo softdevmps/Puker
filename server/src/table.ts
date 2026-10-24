@@ -44,6 +44,8 @@ export const RECONNECT_GRACE_MS = 90_000;
 
 export interface Seat {
   playerId: string;
+  /** Cuenta persistente detrás del jugador. Null para invitados. */
+  userId: number | null;
   name: string;
   chips: number;
 
@@ -69,9 +71,24 @@ export interface Seat {
   missedTurns: number;
 }
 
-export interface TableEvents {
-  /** Se llama cada vez que cambia algo que el cliente debería ver. */
-  onChange: () => void;
+/** Cómo le fue a un jugador en una mano. Alimenta el ranking. */
+export interface HandPlayerRecord {
+  playerId: string;
+  userId: number | null;
+  name: string;
+  /** Lo ganado menos lo apostado en esta mano. La suma de todos da cero. */
+  netChips: number;
+  committed: number;
+  won: number;
+  handLabel: string | null;
+}
+
+export interface HandRecord {
+  roomCode: string;
+  handNumber: number;
+  potSize: number;
+  playedAt: number;
+  players: HandPlayerRecord[];
 }
 
 export class Table {
@@ -99,6 +116,9 @@ export class Table {
   private logEntries: LogEntry[] = [];
   private logSeq = 0;
   private pendingLog: LogEntry[] = [];
+
+  /** Se dispara al cerrar cada mano, para persistir el resultado. */
+  onHandComplete: ((record: HandRecord) => void) | null = null;
 
   constructor(code: string, settings: Partial<TableSettings> = {}) {
     this.code = code;
@@ -130,11 +150,12 @@ export class Table {
     return null;
   }
 
-  sit(playerId: string, name: string, seatIndex?: number): number {
+  sit(playerId: string, name: string, seatIndex?: number, userId: number | null = null): number {
     const existing = this.findSeat(playerId);
     if (existing !== null) {
       const seat = this.seats[existing]!;
       seat.name = name;
+      if (userId !== null) seat.userId = userId;
       seat.connected = true;
       seat.disconnectedAt = null;
       return existing;
@@ -147,6 +168,7 @@ export class Table {
 
     this.seats[index] = {
       playerId,
+      userId,
       name,
       chips: this.settings.startingStack,
       inHand: false,
@@ -384,7 +406,10 @@ export class Table {
     this.seats[sbSeat]!.hasActed = false;
     this.seats[bbSeat]!.hasActed = false;
 
-    const firstToAct = heads ? sbSeat : this.nextActiveFrom(bbSeat + 1);
+    // Mano a mano abre la ciega chica; con 3 o más, el que sigue a la grande.
+    // En ambos casos se busca desde ahí al primero que PUEDA actuar: si quedó
+    // all-in al poner la ciega, el turno tiene que saltearlo.
+    const firstToAct = this.nextActiveFrom(heads ? sbSeat : bbSeat + 1);
     this.setTurn(firstToAct);
 
     // Caso raro: las ciegas dejaron a todos all-in y no hay nada que decidir.
@@ -741,6 +766,15 @@ export class Table {
     );
   }
 
+  /** Todos los que recibieron cartas en esta mano, hayan apostado o no. */
+  private dealtInSeats(): number[] {
+    const out: number[] = [];
+    for (let i = 0; i < this.seats.length; i++) {
+      if (this.seats[i]?.inHand) out.push(i);
+    }
+    return out;
+  }
+
   private contendersAndFolders(): number[] {
     const out: number[] = [];
     for (let i = 0; i < this.seats.length; i++) {
@@ -899,6 +933,31 @@ export class Table {
       }
     }
 
+    // El registro se arma ANTES de limpiar `committed`: es lo que alimenta el
+    // ranking, y necesita saber cuánto puso cada uno además de cuánto ganó.
+    const potSize = pots.reduce((sum, pot) => sum + pot.amount, 0);
+    const record: HandRecord = {
+      roomCode: this.code,
+      handNumber: this.handNumber,
+      potSize,
+      playedAt: Date.now(),
+      // Se incluye a todos los que recibieron cartas, no solo a los que
+      // pusieron fichas: si no, quien se retira preflop sin pagar ciega no
+      // sumaría la mano como jugada.
+      players: this.dealtInSeats().map((index) => {
+        const seat = this.seats[index]!;
+        return {
+          playerId: seat.playerId,
+          userId: seat.userId,
+          name: seat.name,
+          netChips: seat.wonLast - seat.committed,
+          committed: seat.committed,
+          won: seat.wonLast,
+          handLabel: shown.find((entry) => entry.seat === index && !entry.byFold)?.label ?? null,
+        };
+      }),
+    };
+
     for (const seat of this.seats) {
       if (seat) seat.committed = 0;
     }
@@ -910,6 +969,15 @@ export class Table {
       payouts,
       summary: summarize(payouts),
     };
+
+    if (this.onHandComplete && record.players.length > 0) {
+      try {
+        this.onHandComplete(record);
+      } catch (error) {
+        // Que falle el guardado nunca debe cortar la partida.
+        console.error('No se pudo registrar la mano:', error);
+      }
+    }
 
     // Quien se quedó sin fichas pasa a descanso (puede recargar si está habilitado).
     for (const seat of this.seats) {

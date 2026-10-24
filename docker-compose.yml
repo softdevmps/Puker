@@ -1,0 +1,77 @@
+# Todo el stack en una sola caja: juego + HTTPS + servidor TURN.
+#
+# Levantar con:  docker compose up -d --build
+#
+# Las tres piezas:
+#   caddy  -> HTTPS automático con Let's Encrypt (el micrófono exige HTTPS)
+#   puker  -> el juego, con la base SQLite en un volumen
+#   coturn -> relay de audio para quien esté detrás de NAT estricto (datos
+#             móviles). Va en la misma máquina para que el relay quede cerca
+#             y no agregue cientos de milisegundos a la llamada.
+
+services:
+  puker:
+    build: .
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_FILE: /data/puker.db
+      PUBLIC_URL: ${PUBLIC_URL:?falta PUBLIC_URL, ej https://poker.midominio.com}
+      SESSION_SECRET: ${SESSION_SECRET:?falta SESSION_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      TURN_URLS: ${TURN_URLS:-}
+      TURN_SECRET: ${TURN_SECRET:-}
+    volumes:
+      - puker-data:/data
+    expose:
+      - '3001'
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      DOMAIN: ${DOMAIN:?falta DOMAIN, ej poker.midominio.com}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - puker
+
+  coturn:
+    image: coturn/coturn:latest
+    restart: unless-stopped
+    # Red del host: coturn necesita ver las IPs reales y abrir un rango
+    # grande de puertos UDP, cosa que con el NAT de Docker se complica.
+    network_mode: host
+    command: >
+      -n
+      --log-file=stdout
+      --listening-port=3478
+      --tls-listening-port=5349
+      --fingerprint
+      --use-auth-secret
+      --static-auth-secret=${TURN_SECRET:?falta TURN_SECRET}
+      --realm=${DOMAIN}
+      --no-cli
+      --no-multicast-peers
+      --min-port=49160
+      --max-port=49200
+      --external-ip=${SERVER_IP:?falta SERVER_IP, la IP pública del VPS}
+      --cert=/certs/cert.pem
+      --pkey=/certs/key.pem
+    volumes:
+      # Reutiliza los certificados que ya saca Caddy, para TURN sobre TLS
+      # (útil cuando una red corporativa solo deja salir por el 443).
+      - caddy-data:/caddy-data:ro
+      - ./deploy/certs:/certs:ro
+
+volumes:
+  puker-data:
+  caddy-data:
+  caddy-config:

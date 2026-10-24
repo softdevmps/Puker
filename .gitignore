@@ -1,7 +1,20 @@
 node_modules/
 dist/
 *.tsbuildinfo
+
+# Secretos: nunca al repositorio.
 .env
 .env.local
-.DS_Store
+.env.*.local
+
+# Base de datos: tiene cuentas y hashes de contraseñas.
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Certificados TLS del deploy.
+deploy/certs/
+
 npm-debug.log*
+.DS_Store

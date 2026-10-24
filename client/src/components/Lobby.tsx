@@ -1,14 +1,17 @@
 import { useState } from 'react';
 
-import { DEFAULT_SETTINGS, type TableSettings } from '@puker/shared';
+import { DEFAULT_SETTINGS, type AuthUser, type TableSettings } from '@puker/shared';
 
 interface Props {
-  savedName: string;
+  user: AuthUser;
   savedRoom: string;
   busy: boolean;
-  onCreate(name: string, settings: Partial<TableSettings>): Promise<void>;
-  onJoin(code: string, name: string): Promise<void>;
+  connected: boolean;
+  onCreate(settings: Partial<TableSettings>): Promise<void>;
+  onJoin(code: string): Promise<void>;
   onError(message: string): void;
+  onShowRanking(): void;
+  onLogout(): void;
 }
 
 const STACK_PRESETS = [
@@ -17,8 +20,17 @@ const STACK_PRESETS = [
   { label: 'Largo', stack: 5000, sb: 25, bb: 50 },
 ];
 
-export function Lobby({ savedName, savedRoom, busy, onCreate, onJoin, onError }: Props) {
-  const [name, setName] = useState(savedName);
+export function Lobby({
+  user,
+  savedRoom,
+  busy,
+  connected,
+  onCreate,
+  onJoin,
+  onError,
+  onShowRanking,
+  onLogout,
+}: Props) {
   const [code, setCode] = useState(savedRoom);
   const [mode, setMode] = useState<'menu' | 'create' | 'join'>('menu');
 
@@ -27,14 +39,10 @@ export function Lobby({ savedName, savedRoom, busy, onCreate, onJoin, onError }:
   const [turnTimeSec, setTurnTimeSec] = useState(DEFAULT_SETTINGS.turnTimeSec);
   const [allowRebuy, setAllowRebuy] = useState(true);
 
-  const trimmedName = name.trim();
-  const nameOk = trimmedName.length >= 2;
-
   const handleCreate = async () => {
-    if (!nameOk) return onError('Poné tu nombre (mínimo 2 letras)');
     const chosen = STACK_PRESETS[preset] ?? STACK_PRESETS[1]!;
     try {
-      await onCreate(trimmedName, {
+      await onCreate({
         smallBlind: chosen.sb,
         bigBlind: chosen.bb,
         startingStack: chosen.stack,
@@ -48,11 +56,10 @@ export function Lobby({ savedName, savedRoom, busy, onCreate, onJoin, onError }:
   };
 
   const handleJoin = async () => {
-    if (!nameOk) return onError('Poné tu nombre (mínimo 2 letras)');
-    const trimmedCode = code.trim().toUpperCase();
-    if (trimmedCode.length < 4) return onError('El código tiene 4 caracteres');
+    const trimmed = code.trim().toUpperCase();
+    if (trimmed.length < 4) return onError('El código tiene 4 caracteres');
     try {
-      await onJoin(trimmedCode, trimmedName);
+      await onJoin(trimmed);
     } catch (error) {
       onError(error instanceof Error ? error.message : 'No se pudo entrar a la mesa');
     }
@@ -65,28 +72,32 @@ export function Lobby({ savedName, savedRoom, busy, onCreate, onJoin, onError }:
           <h1 className="lobby__title">
             Puker <span className="lobby__suits">♠ ♥ ♦ ♣</span>
           </h1>
-          <p className="lobby__subtitle">Texas Hold'em para jugar con amigos. Fichas de juguete, orgullo real.</p>
+          <p className="lobby__subtitle">
+            Hola, <strong>{user.displayName}</strong>. ¿Armamos una mesa?
+          </p>
+          {!connected ? <p className="lobby__offline">Conectando con el servidor...</p> : null}
         </header>
-
-        <label className="field">
-          <span className="field__label">Tu nombre</span>
-          <input
-            className="field__input"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="Cómo te ven en la mesa"
-            maxLength={16}
-            autoComplete="nickname"
-          />
-        </label>
 
         {mode === 'menu' ? (
           <div className="lobby__actions">
-            <button type="button" className="btn btn--primary btn--wide" onClick={() => setMode('create')}>
+            <button
+              type="button"
+              className="btn btn--primary btn--wide"
+              disabled={!connected}
+              onClick={() => setMode('create')}
+            >
               Crear una mesa
             </button>
-            <button type="button" className="btn btn--ghost btn--wide" onClick={() => setMode('join')}>
+            <button
+              type="button"
+              className="btn btn--ghost btn--wide"
+              disabled={!connected}
+              onClick={() => setMode('join')}
+            >
               Entrar con código
+            </button>
+            <button type="button" className="btn btn--ghost btn--wide" onClick={onShowRanking}>
+              Ver el ranking
             </button>
           </div>
         ) : null}
@@ -104,7 +115,6 @@ export function Lobby({ savedName, savedRoom, busy, onCreate, onJoin, onError }:
                 autoCapitalize="characters"
                 autoCorrect="off"
                 spellCheck={false}
-                inputMode="text"
               />
             </label>
             <div className="lobby__actions">
@@ -153,6 +163,11 @@ export function Lobby({ savedName, savedRoom, busy, onCreate, onJoin, onError }:
                 value={maxSeats}
                 onChange={(event) => setMaxSeats(Number(event.target.value))}
               />
+              {maxSeats > 8 ? (
+                <span className="field__hint">
+                  Con más de 8 el audio en malla empieza a exigir mucho a cada conexión.
+                </span>
+              ) : null}
             </div>
 
             <div className="field">
@@ -193,7 +208,10 @@ export function Lobby({ savedName, savedRoom, busy, onCreate, onJoin, onError }:
         ) : null}
 
         <footer className="lobby__footer">
-          Creá una mesa, pasale el código a tus amigos y listo. No hay plata real ni cuentas: solo fichas.
+          Entraste como <strong>@{user.username}</strong>.{' '}
+          <button type="button" className="linkish linkish--inline" onClick={onLogout}>
+            Cerrar sesión
+          </button>
         </footer>
       </div>
     </div>

@@ -1,18 +1,23 @@
 /** Punto de entrada: levanta el servidor y lo apaga con prolijidad. */
 
+import { config } from './config.js';
 import { createPukerServer } from './server.js';
-
-const PORT = Number(process.env.PORT ?? 3001);
-const HOST = process.env.HOST ?? '0.0.0.0';
 
 const server = createPukerServer();
 
-const port = await server.listen(PORT, HOST);
+const port = await server.listen(config.port, config.host);
 
 console.log(`\n  Puker escuchando en http://localhost:${port}`);
 if (!server.servingClient) {
   console.log('  Cliente en desarrollo: http://localhost:5173');
 }
+console.log(`  Base de datos: ${config.databaseFile}`);
+console.log(`  Login con Google: ${config.google.enabled ? 'activado' : 'desactivado'}`);
+console.log(
+  `  Voz: STUN ${config.voice.stunUrls.length} servidor(es), TURN ${
+    config.voice.turnUrls.length > 0 && config.voice.turnSecret ? 'configurado' : 'SIN configurar'
+  }`,
+);
 console.log('');
 
 let closing = false;

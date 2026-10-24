@@ -2,7 +2,7 @@
  * Servidor HTTP + Socket.IO.
  *
  * En producción también sirve el build del cliente, así todo el proyecto es un
- * único proceso de Node (fácil de subir a Render, Railway, Fly o un VPS).
+ * único proceso de Node.
  *
  * Se expone como fábrica en vez de arrancar al importarse, para que los tests
  * de integración puedan levantar y bajar instancias a voluntad.
@@ -21,14 +21,21 @@ import { Server, type Socket } from 'socket.io';
 import {
   type Ack,
   type ClientToServerEvents,
+  type IceConfig,
   type LogEntry,
   type PlayerAction,
+  type RankingEntry,
   type ServerToClientEvents,
+  type VoicePeer,
   MAX_SEATS,
-  sanitizeName,
 } from '@puker/shared';
 
-import { RoomManager, normalizeCode, type Room } from './rooms.js';
+import { createAuthRouter } from './auth/routes.js';
+import { userFromCookieHeader } from './auth/sessions.js';
+import { config } from './config.js';
+import { Store, type UserRow } from './db/store.js';
+import { RoomManager, identityOf, normalizeCode, type PlayerIdentity, type Room } from './rooms.js';
+import { VoiceRooms, buildIceConfig } from './voice.js';
 
 const TICK_MS = 400;
 const CHAT_MIN_INTERVAL_MS = 700;
@@ -38,8 +45,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const defaultClientDist = resolve(here, '../../client/dist');
 
 interface SocketData {
-  token?: string;
-  playerId?: string;
+  user?: UserRow;
+  player?: PlayerIdentity;
   roomCode?: string;
   lastChatAt?: number;
 }
@@ -52,19 +59,18 @@ type AppSocket = Socket<
 >;
 
 export interface PukerServerOptions {
-  /** Carpeta del build del cliente. `false` desactiva el servido de estáticos. */
   clientDist?: string | false;
-  /** Intervalo del reloj de las mesas. Los tests lo bajan para ir más rápido. */
   tickMs?: number;
-  /** Mínimo entre mensajes de chat por socket. */
   chatIntervalMs?: number;
+  /** Ruta de la base. Los tests usan `:memory:`. */
+  databaseFile?: string;
 }
 
 export interface PukerServer {
   httpServer: HttpServer;
   io: Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>;
   manager: RoomManager;
-  /** Arranca y resuelve con el puerto real (útil con puerto 0 en tests). */
+  store: Store;
   listen(port: number, host?: string): Promise<number>;
   close(): Promise<void>;
   servingClient: boolean;
@@ -76,18 +82,57 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
   const clientDist =
     options.clientDist === false ? null : (options.clientDist ?? defaultClientDist);
 
+  const store = new Store(options.databaseFile ?? config.databaseFile);
   const manager = new RoomManager();
+  const voice = new VoiceRooms();
+
+  // Cada mano terminada se guarda para el ranking. Solo cuentan los jugadores
+  // con cuenta: los asientos sin userId se ignoran.
+  manager.onHandComplete = (record) => {
+    try {
+      store.recordHand(
+        record.players
+          .filter((player) => player.userId !== null)
+          .map((player) => ({
+            userId: player.userId!,
+            roomCode: record.roomCode,
+            handNumber: record.handNumber,
+            netChips: player.netChips,
+            won: player.won > 0,
+            potSize: record.potSize,
+            handLabel: player.handLabel,
+            playedAt: record.playedAt,
+          })),
+      );
+    } catch (error) {
+      console.error('No se pudo guardar el resultado de la mano:', error);
+    }
+  };
+
   const app = express();
   const httpServer = createServer(app);
 
+  app.set('trust proxy', 1); // detrás de Caddy/nginx, para que req.ip sea real
   app.use(compression());
+  app.use(express.json({ limit: '16kb' }));
   app.disable('x-powered-by');
 
+  app.use('/api/auth', createAuthRouter(store));
+
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, rooms: manager.size, uptime: Math.round(process.uptime()) });
+    res.json({
+      ok: true,
+      rooms: manager.size,
+      users: store.countUsers(),
+      uptime: Math.round(process.uptime()),
+    });
   });
 
-  /** El cliente lo usa para avisar "esa sala no existe" antes de intentar entrar. */
+  app.get('/api/ranking', (_req, res) => {
+    const rows: RankingEntry[] = store.ranking(100);
+    res.json({ ranking: rows });
+  });
+
   app.get('/api/rooms/:code', (req, res) => {
     const code = normalizeCode(req.params.code);
     const room = manager.get(code);
@@ -108,7 +153,6 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
 
   if (servingClient && clientDist) {
     app.use(express.static(clientDist, { maxAge: '1h', index: false }));
-    // SPA: cualquier ruta que no sea API devuelve el index.
     app.get('*', (req, res, next) => {
       if (req.path.startsWith('/api') || req.path.startsWith('/socket.io')) return next();
       res.sendFile(join(clientDist, 'index.html'));
@@ -123,19 +167,28 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
   }
 
   const io: PukerServer['io'] = new Server(httpServer, {
-    cors: {
-      // En dev el cliente entra por el proxy de Vite, pero dejamos CORS
-      // abierto para poder probar desde el celular por IP de la red local.
-      origin: true,
-      credentials: true,
-    },
+    cors: { origin: true, credentials: true },
     pingTimeout: 25_000,
     pingInterval: 10_000,
   });
 
+  /**
+   * Identidad del socket: sale de la misma cookie de sesión del navegador.
+   * Sin cuenta no se puede jugar, así que la conexión se rechaza de entrada.
+   */
+  io.use((socket, next) => {
+    const user = userFromCookieHeader(socket.handshake.headers.cookie, store);
+    if (!user) {
+      next(new Error('Necesitás iniciar sesión'));
+      return;
+    }
+    (socket as AppSocket).data.user = user;
+    (socket as AppSocket).data.player = identityOf(user);
+    next();
+  });
+
   const roomKey = (code: string): string => `room:${code}`;
 
-  /** Manda a cada socket de la sala su propia vista del estado. */
   function broadcast(code: string): void {
     const room = manager.get(code);
     if (!room) return;
@@ -146,7 +199,7 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
     if (sockets) {
       for (const socketId of sockets) {
         const socket = io.sockets.sockets.get(socketId) as AppSocket | undefined;
-        const playerId = socket?.data.playerId;
+        const playerId = socket?.data.player?.playerId;
         if (!socket || !playerId) continue;
         socket.emit('state', room.table.getStateFor(playerId));
       }
@@ -155,57 +208,50 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
     if (pending.length) io.to(roomKey(code)).emit('log', pending);
   }
 
-  /** Resuelve la sala y el jugador de un socket, o lanza. */
-  function contextOf(socket: AppSocket): { room: Room; playerId: string; code: string } {
+  function contextOf(socket: AppSocket): { room: Room; player: PlayerIdentity; code: string } {
     const code = socket.data.roomCode;
-    const playerId = socket.data.playerId;
-    if (!code || !playerId) throw new Error('Todavía no entraste a ninguna sala');
+    const player = socket.data.player;
+    if (!code || !player) throw new Error('Todavía no entraste a ninguna sala');
     const room = manager.get(code);
     if (!room) throw new Error('La sala ya no existe');
-    return { room, playerId, code };
+    return { room, player, code };
   }
 
-  function attach(socket: AppSocket, room: Room, playerId: string, token: string): void {
-    // Si el socket venía de otra sala, la deja primero.
+  function attach(socket: AppSocket, room: Room, player: PlayerIdentity): void {
     if (socket.data.roomCode && socket.data.roomCode !== room.table.code) {
+      leaveVoice(socket);
       socket.leave(roomKey(socket.data.roomCode));
     }
 
-    socket.data.token = token;
-    socket.data.playerId = playerId;
     socket.data.roomCode = room.table.code;
     socket.join(roomKey(room.table.code));
 
-    room.table.setConnected(playerId, true);
+    room.table.setConnected(player.playerId, true);
     room.lastActivityAt = Date.now();
 
-    // Al entrar o reconectar, el historial para no arrancar con la pantalla vacía.
     const history = room.table.recentLog();
     if (history.length) socket.emit('log', history);
     for (const message of room.chat.slice(-20)) socket.emit('chat', message);
-    socket.emit('state', room.table.getStateFor(playerId));
+    socket.emit('state', room.table.getStateFor(player.playerId));
   }
 
-  function nameOf(room: Room, playerId: string, socket: AppSocket): string {
-    const seat = room.table.seatOf(playerId);
-    if (seat) return seat.name;
-    const token = socket.data.token;
-    const session = token ? manager.sessionByToken(token) : undefined;
-    return sanitizeName(session?.name ?? 'Jugador') || 'Jugador';
+  /** Saca al socket de la conversación de voz y avisa a los demás. */
+  function leaveVoice(socket: AppSocket): void {
+    const code = socket.data.roomCode;
+    const playerId = socket.data.player?.playerId;
+    if (!code || !playerId) return;
+    if (!voice.has(code, playerId)) return;
+    voice.leave(code, playerId);
+    socket.to(roomKey(code)).emit('voice:peer-left', { playerId });
   }
 
   io.on('connection', (socket: AppSocket) => {
     socket.on('room:create', (payload, ack) => {
       try {
-        const outcome = manager.create(payload?.name ?? '', payload?.settings);
-        attach(socket, outcome.room, outcome.session.playerId, outcome.session.token);
-        ack(
-          ok({
-            code: outcome.room.table.code,
-            playerId: outcome.session.playerId,
-            token: outcome.session.token,
-          }),
-        );
+        const player = socket.data.player!;
+        const outcome = manager.create(player, payload?.settings);
+        attach(socket, outcome.room, player);
+        ack(ok({ code: outcome.room.table.code, playerId: player.playerId, seated: true }));
         broadcast(outcome.room.table.code);
       } catch (error) {
         ack(fail(error));
@@ -214,11 +260,12 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
 
     socket.on('room:join', (payload, ack) => {
       try {
-        const outcome = manager.join(payload?.code ?? '', payload?.name ?? '', payload?.token);
+        const player = socket.data.player!;
+        const outcome = manager.join(payload?.code ?? '', player);
         const code = outcome.room.table.code;
-        attach(socket, outcome.room, outcome.session.playerId, outcome.session.token);
+        attach(socket, outcome.room, player);
 
-        ack(ok({ code, playerId: outcome.session.playerId, token: outcome.session.token }));
+        ack(ok({ code, playerId: player.playerId, seated: outcome.seated }));
 
         if (!outcome.seated) {
           socket.emit('toast', {
@@ -234,15 +281,15 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
 
     socket.on('seat:take', (payload, ack) => {
       try {
-        const { room, playerId, code } = contextOf(socket);
+        const { room, player, code } = contextOf(socket);
         const seat = Math.floor(Number(payload?.seat));
         if (!Number.isInteger(seat) || seat < 0 || seat >= MAX_SEATS) {
           throw new Error('Asiento inválido');
         }
-        if (room.table.findSeat(playerId) === null) {
-          room.table.sit(playerId, nameOf(room, playerId, socket), seat);
+        if (room.table.findSeat(player.playerId) === null) {
+          room.table.sit(player.playerId, player.name, seat, player.userId);
         } else {
-          room.table.moveSeat(playerId, seat);
+          room.table.moveSeat(player.playerId, seat);
         }
         ack(ok(undefined));
         broadcast(code);
@@ -253,8 +300,8 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
 
     socket.on('seat:leave', (_payload, ack) => {
       try {
-        const { room, playerId, code } = contextOf(socket);
-        room.table.leave(playerId);
+        const { room, player, code } = contextOf(socket);
+        room.table.leave(player.playerId);
         ack(ok(undefined));
         broadcast(code);
       } catch (error) {
@@ -264,8 +311,8 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
 
     socket.on('seat:sitout', (payload, ack) => {
       try {
-        const { room, playerId, code } = contextOf(socket);
-        room.table.setSittingOut(playerId, Boolean(payload?.sitOut));
+        const { room, player, code } = contextOf(socket);
+        room.table.setSittingOut(player.playerId, Boolean(payload?.sitOut));
         ack(ok(undefined));
         broadcast(code);
       } catch (error) {
@@ -275,8 +322,8 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
 
     socket.on('game:start', (_payload, ack) => {
       try {
-        const { room, playerId, code } = contextOf(socket);
-        room.table.start(playerId);
+        const { room, player, code } = contextOf(socket);
+        room.table.start(player.playerId);
         ack(ok(undefined));
         broadcast(code);
       } catch (error) {
@@ -286,8 +333,8 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
 
     socket.on('game:pause', (_payload, ack) => {
       try {
-        const { room, playerId, code } = contextOf(socket);
-        room.table.pause(playerId);
+        const { room, player, code } = contextOf(socket);
+        room.table.pause(player.playerId);
         ack(ok(undefined));
         broadcast(code);
       } catch (error) {
@@ -297,8 +344,8 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
 
     socket.on('game:action', (payload, ack) => {
       try {
-        const { room, playerId, code } = contextOf(socket);
-        room.table.act(playerId, normalizeAction(payload));
+        const { room, player, code } = contextOf(socket);
+        room.table.act(player.playerId, normalizeAction(payload));
         room.lastActivityAt = Date.now();
         ack(ok(undefined));
         broadcast(code);
@@ -309,8 +356,8 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
 
     socket.on('player:rebuy', (_payload, ack) => {
       try {
-        const { room, playerId, code } = contextOf(socket);
-        room.table.rebuy(playerId);
+        const { room, player, code } = contextOf(socket);
+        room.table.rebuy(player.playerId);
         ack(ok(undefined));
         broadcast(code);
       } catch (error) {
@@ -320,8 +367,8 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
 
     socket.on('settings:update', (payload, ack) => {
       try {
-        const { room, playerId, code } = contextOf(socket);
-        if (room.table.hostId && room.table.hostId !== playerId) {
+        const { room, player, code } = contextOf(socket);
+        if (room.table.hostId && room.table.hostId !== player.playerId) {
           throw new Error('Solo el anfitrión puede cambiar las reglas');
         }
         room.table.updateSettings(payload ?? {});
@@ -334,15 +381,84 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
 
     socket.on('chat:send', (payload, ack) => {
       try {
-        const { room, playerId, code } = contextOf(socket);
+        const { room, player, code } = contextOf(socket);
         const now = Date.now();
         if (now - (socket.data.lastChatAt ?? 0) < chatIntervalMs) {
           throw new Error('Esperá un segundo antes de volver a escribir');
         }
         socket.data.lastChatAt = now;
 
-        const message = manager.addChat(room, nameOf(room, playerId, socket), payload?.text ?? '');
+        const message = manager.addChat(room, player.name, payload?.text ?? '');
         if (message) io.to(roomKey(code)).emit('chat', message);
+        ack(ok(undefined));
+      } catch (error) {
+        ack(fail(error));
+      }
+    });
+
+    // ------------------------------------------------------------- voz
+
+    socket.on('voice:config', (_payload, ack) => {
+      try {
+        const player = socket.data.player!;
+        const iceConfig: IceConfig = buildIceConfig(player.playerId);
+        ack(ok(iceConfig));
+      } catch (error) {
+        ack(fail(error));
+      }
+    });
+
+    socket.on('voice:join', (_payload, ack) => {
+      try {
+        const { room, player, code } = contextOf(socket);
+
+        const peers: VoicePeer[] = voice
+          .members(code)
+          .filter((id) => id !== player.playerId)
+          .map((id) => {
+            const seat = room.table.seatOf(id);
+            return { playerId: id, name: seat?.name ?? 'Jugador', seat: room.table.findSeat(id) };
+          });
+
+        voice.join(code, player.playerId);
+        socket.to(roomKey(code)).emit('voice:peer-joined', {
+          playerId: player.playerId,
+          name: player.name,
+          seat: room.table.findSeat(player.playerId),
+        });
+
+        ack(ok(peers));
+      } catch (error) {
+        ack(fail(error));
+      }
+    });
+
+    socket.on('voice:leave', (_payload, ack) => {
+      try {
+        leaveVoice(socket);
+        ack(ok(undefined));
+      } catch (error) {
+        ack(fail(error));
+      }
+    });
+
+    socket.on('voice:signal', (payload, ack) => {
+      try {
+        const { code, player } = contextOf(socket);
+        const to = String(payload?.to ?? '');
+        if (!to) throw new Error('Falta el destinatario');
+        if (to === player.playerId) throw new Error('No podés señalizarte a vos mismo');
+        // Solo se reenvía dentro de la misma sala y entre quienes activaron voz.
+        if (!voice.has(code, to) || !voice.has(code, player.playerId)) {
+          throw new Error('Ese jugador no está en la conversación');
+        }
+
+        for (const socketId of io.sockets.adapter.rooms.get(roomKey(code)) ?? []) {
+          const other = io.sockets.sockets.get(socketId) as AppSocket | undefined;
+          if (other?.data.player?.playerId === to) {
+            other.emit('voice:signal', { from: player.playerId, data: payload.data });
+          }
+        }
         ack(ok(undefined));
       } catch (error) {
         ack(fail(error));
@@ -351,7 +467,7 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
 
     socket.on('disconnect', () => {
       const code = socket.data.roomCode;
-      const playerId = socket.data.playerId;
+      const playerId = socket.data.player?.playerId;
       if (!code || !playerId) return;
       const room = manager.get(code);
       if (!room) return;
@@ -359,16 +475,16 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
       // ¿Le queda otra pestaña abierta? Entonces sigue conectado.
       const stillHere = [...(io.sockets.adapter.rooms.get(roomKey(code)) ?? [])].some((id) => {
         const other = io.sockets.sockets.get(id) as AppSocket | undefined;
-        return other && other.id !== socket.id && other.data.playerId === playerId;
+        return other && other.id !== socket.id && other.data.player?.playerId === playerId;
       });
       if (stillHere) return;
 
+      leaveVoice(socket);
       room.table.setConnected(playerId, false);
       broadcast(code);
     });
   });
 
-  // Reloj global: un solo intervalo mueve todas las mesas.
   const tickTimer = setInterval(() => {
     for (const code of manager.listCodes()) {
       const room = manager.get(code);
@@ -384,9 +500,10 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
   const cleanupTimer = setInterval(() => {
     const removed = manager.cleanup();
     if (removed.length) console.log(`Salas cerradas por inactividad: ${removed.join(', ')}`);
+    const sessions = store.deleteExpiredSessions();
+    if (sessions > 0) console.log(`Sesiones vencidas borradas: ${sessions}`);
   }, CLEANUP_MS);
 
-  // Los timers no deben mantener el proceso vivo por sí solos.
   tickTimer.unref?.();
   cleanupTimer.unref?.();
 
@@ -394,6 +511,7 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
     httpServer,
     io,
     manager,
+    store,
     servingClient,
 
     listen(port, host = '0.0.0.0') {
@@ -415,6 +533,7 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
         if (!httpServer.listening) return done();
         httpServer.close(() => done());
       });
+      store.close();
     },
   };
 }

@@ -10,10 +10,20 @@ import { EmptySeat, Seat } from './Seat';
 interface Props {
   state: GameState;
   turnDeadline: number | null;
+  /** playerIds conectados al audio. */
+  voiceParticipants: Set<string>;
+  /** playerIds hablando ahora mismo. */
+  voiceSpeaking: Set<string>;
   onSit(seat: number): void;
 }
 
-export function TableView({ state, turnDeadline, onSit }: Props) {
+export function TableView({
+  state,
+  turnDeadline,
+  voiceParticipants,
+  voiceSpeaking,
+  onSit,
+}: Props) {
   const total = state.settings.maxSeats;
   const countdown = useCountdown(turnDeadline, state.settings.turnTimeSec * 1000);
   const showingResult = state.phase === 'handover' && state.lastResult !== null;
@@ -103,6 +113,8 @@ export function TableView({ state, turnDeadline, onSit }: Props) {
                 timeFraction={player.isTurn ? countdown.fraction : 0}
                 timeSeconds={player.isTurn ? countdown.seconds : 0}
                 bestCards={bestBySeat.get(seat) ?? []}
+                inVoice={voiceParticipants.has(player.id)}
+                speaking={voiceSpeaking.has(player.id)}
               />
             ) : (
               <EmptySeat seat={seat} canSit={isSpectator && seatsFree} onSit={onSit} />

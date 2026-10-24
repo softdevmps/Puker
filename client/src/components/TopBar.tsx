@@ -2,12 +2,17 @@ import { useState } from 'react';
 
 import { formatChips, type GameState } from '@puker/shared';
 
+import type { VoiceApi } from '../lib/useVoice';
+import { VoiceBar } from './VoiceBar';
+
 interface Props {
   state: GameState;
   connected: boolean;
   muted: boolean;
+  voice: VoiceApi;
   onToggleMuted(): void;
   onTogglePanel(): void;
+  onShowRanking(): void;
   onStart(): void;
   onPause(): void;
   onSitOut(sitOut: boolean): void;
@@ -21,8 +26,10 @@ export function TopBar({
   state,
   connected,
   muted,
+  voice,
   onToggleMuted,
   onTogglePanel,
+  onShowRanking,
   onStart,
   onPause,
   onSitOut,
@@ -93,6 +100,8 @@ export function TopBar({
           </button>
         ) : null}
 
+        <VoiceBar voice={voice} />
+
         <button type="button" className="btn btn--icon" onClick={onTogglePanel} title="Historial y chat">
           ☰
         </button>
@@ -114,11 +123,22 @@ export function TopBar({
               type="button"
               className="sheet__item"
               onClick={() => {
+                setMenuOpen(false);
+                onShowRanking();
+              }}
+            >
+              🏆 Ver el ranking
+            </button>
+
+            <button
+              type="button"
+              className="sheet__item"
+              onClick={() => {
                 onToggleMuted();
                 setMenuOpen(false);
               }}
             >
-              {muted ? '🔔 Activar sonido' : '🔇 Silenciar sonido'}
+              {muted ? '🔔 Activar avisos' : '🔇 Silenciar avisos'}
             </button>
 
             {you && you.chips <= 0 && state.settings.allowRebuy ? (

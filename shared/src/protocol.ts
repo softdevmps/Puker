@@ -34,6 +34,40 @@ export const DEFAULT_SETTINGS: TableSettings = {
   allowRebuy: true,
 };
 
+// ------------------------------------------------------------------- cuentas
+
+export interface AuthUser {
+  id: number;
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+  /** Puede entrar con contraseña. */
+  hasPassword: boolean;
+  /** Tiene una cuenta de Google vinculada. */
+  hasGoogle: boolean;
+}
+
+export interface AuthInfo {
+  user: AuthUser | null;
+  /** El servidor tiene credenciales de Google configuradas. */
+  googleEnabled: boolean;
+}
+
+export interface RankingEntry {
+  userId: number;
+  displayName: string;
+  avatarUrl: string | null;
+  /** Fichas netas acumuladas: lo ganado menos lo apostado. */
+  net: number;
+  hands: number;
+  wins: number;
+  biggestPot: number;
+  bestHand: string | null;
+  lastPlayedAt: number | null;
+}
+
+// --------------------------------------------------------------------- juego
+
 export type PlayerStatus =
   /** Sentado pero esperando que arranque la próxima mano. */
   | 'waiting'
@@ -167,6 +201,27 @@ export interface GameState {
   pausedReason: string | null;
 }
 
+// ----------------------------------------------------------------------- voz
+
+/** Configuración ICE que el servidor le entrega al navegador. */
+export interface IceConfig {
+  iceServers: {
+    urls: string | string[];
+    username?: string;
+    credential?: string;
+  }[];
+  /** Si no hay TURN configurado, se avisa para poder alertar en la UI. */
+  hasTurn: boolean;
+}
+
+export interface VoicePeer {
+  playerId: string;
+  name: string;
+  seat: number | null;
+}
+
+// --------------------------------------------------------------------- juego
+
 export type PlayerAction =
   | { type: 'fold' }
   | { type: 'check' }
@@ -196,18 +251,16 @@ export type Ack<T = undefined> = { ok: true; data: T } | { ok: false; error: str
 export interface JoinResult {
   code: string;
   playerId: string;
-  token: string;
+  /** False si la mesa estaba llena y entraste como espectador. */
+  seated: boolean;
 }
 
 export interface ClientToServerEvents {
   'room:create': (
-    payload: { name: string; settings?: Partial<TableSettings> },
+    payload: { settings?: Partial<TableSettings> },
     ack: (res: Ack<JoinResult>) => void,
   ) => void;
-  'room:join': (
-    payload: { code: string; name: string; token?: string },
-    ack: (res: Ack<JoinResult>) => void,
-  ) => void;
+  'room:join': (payload: { code: string }, ack: (res: Ack<JoinResult>) => void) => void;
   'seat:take': (payload: { seat: number }, ack: (res: Ack) => void) => void;
   'seat:leave': (payload: Record<string, never>, ack: (res: Ack) => void) => void;
   'seat:sitout': (payload: { sitOut: boolean }, ack: (res: Ack) => void) => void;
@@ -217,6 +270,14 @@ export interface ClientToServerEvents {
   'player:rebuy': (payload: Record<string, never>, ack: (res: Ack) => void) => void;
   'settings:update': (payload: Partial<TableSettings>, ack: (res: Ack) => void) => void;
   'chat:send': (payload: { text: string }, ack: (res: Ack) => void) => void;
+
+  /** Pide la config ICE (STUN/TURN) para arrancar la voz. */
+  'voice:config': (payload: Record<string, never>, ack: (res: Ack<IceConfig>) => void) => void;
+  /** Avisa que encendiste el micrófono y querés hablar. */
+  'voice:join': (payload: Record<string, never>, ack: (res: Ack<VoicePeer[]>) => void) => void;
+  'voice:leave': (payload: Record<string, never>, ack: (res: Ack) => void) => void;
+  /** Relay opaco de la negociación WebRTC hacia otro par. */
+  'voice:signal': (payload: { to: string; data: unknown }, ack: (res: Ack) => void) => void;
 }
 
 export interface ServerToClientEvents {
@@ -225,4 +286,8 @@ export interface ServerToClientEvents {
   chat: (message: ChatMessage) => void;
   toast: (payload: { kind: 'info' | 'error' | 'success'; text: string }) => void;
   kicked: (payload: { reason: string }) => void;
+
+  'voice:peer-joined': (peer: VoicePeer) => void;
+  'voice:peer-left': (payload: { playerId: string }) => void;
+  'voice:signal': (payload: { from: string; data: unknown }) => void;
 }

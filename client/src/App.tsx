@@ -1,16 +1,38 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ActionBar } from './components/ActionBar';
+import { AuthScreen } from './components/AuthScreen';
 import { Lobby } from './components/Lobby';
+import { Ranking } from './components/Ranking';
 import { SidePanel } from './components/SidePanel';
 import { TableView } from './components/TableView';
 import { TopBar } from './components/TopBar';
+import { VoiceWarning } from './components/VoiceBar';
 import { sounds } from './lib/sound';
-import { useGame } from './useGame';
+import { useVoice } from './lib/useVoice';
+import { useAuth } from './useAuth';
+import { type GameApi, useGame } from './useGame';
 
 export function App() {
-  const api = useGame();
+  const auth = useAuth();
+  const game = useGame(auth.user !== null);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [rankingOpen, setRankingOpen] = useState(false);
+
+  const { state, notify } = game;
+
+  /** Nombre visible de un jugador, para los mensajes del audio. */
+  const nameOf = useCallback(
+    (playerId: string) => state?.players.find((p) => p.id === playerId)?.name ?? 'Alguien',
+    [state],
+  );
+
+  const voice = useVoice({
+    socket: game.socket,
+    youId: state?.youId ?? '',
+    nameOf,
+    notify,
+  });
 
   // Un link del tipo /?sala=ABCD precarga el código de la mesa.
   const roomFromUrl = useMemo(() => {
@@ -27,8 +49,7 @@ export function App() {
   const previousResult = useRef(0);
 
   useEffect(() => {
-    const state = api.state;
-    if (!state || api.muted) return;
+    if (!state || game.muted) return;
 
     const isMyTurn = state.legal !== null;
     if (isMyTurn && !previousTurn.current) sounds.yourTurn();
@@ -42,25 +63,45 @@ export function App() {
     const result = state.lastResult;
     if (result && result.handNumber !== previousResult.current) {
       previousResult.current = result.handNumber;
-      const youWon = result.payouts.some((payout) => payout.seat === state.youSeat);
-      if (youWon) sounds.win();
+      if (result.payouts.some((payout) => payout.seat === state.youSeat)) sounds.win();
     }
-  }, [api.state, api.muted]);
+  }, [state, game.muted]);
 
-  const { state } = api;
+  if (auth.loading) {
+    return (
+      <div className="lobby">
+        <div className="lobby__card lobby__card--loading">Cargando...</div>
+      </div>
+    );
+  }
 
-  if (api.screen === 'lobby' || !state) {
+  if (!auth.user) {
+    return (
+      <>
+        <AuthScreen auth={auth} onNotify={notify} />
+        <Toasts game={game} />
+      </>
+    );
+  }
+
+  if (game.screen === 'lobby' || !state) {
     return (
       <>
         <Lobby
-          savedName={api.savedName}
-          savedRoom={roomFromUrl || api.savedRoom}
-          busy={api.busy}
-          onCreate={api.createRoom}
-          onJoin={api.joinRoom}
-          onError={(message) => api.notify('error', message)}
+          user={auth.user}
+          savedRoom={roomFromUrl || game.savedRoom}
+          busy={game.busy}
+          connected={game.connected}
+          onCreate={game.createRoom}
+          onJoin={game.joinRoom}
+          onError={(message) => notify('error', message)}
+          onShowRanking={() => setRankingOpen(true)}
+          onLogout={() => void auth.logout()}
         />
-        <Toasts api={api} />
+        {rankingOpen ? (
+          <Ranking youId={auth.user.id} onClose={() => setRankingOpen(false)} />
+        ) : null}
+        <Toasts game={game} />
       </>
     );
   }
@@ -69,50 +110,58 @@ export function App() {
     <div className="app">
       <TopBar
         state={state}
-        connected={api.connected}
-        muted={api.muted}
-        onToggleMuted={api.toggleMuted}
+        connected={game.connected}
+        muted={game.muted}
+        voice={voice}
+        onToggleMuted={game.toggleMuted}
         onTogglePanel={() => setPanelOpen((open) => !open)}
-        onStart={() => void api.startGame().catch(() => {})}
-        onPause={() => void api.pauseGame().catch(() => {})}
-        onSitOut={(sitOut) => void api.setSitOut(sitOut).catch(() => {})}
-        onRebuy={() => void api.rebuy().catch(() => {})}
-        onLeaveSeat={() => void api.leaveSeat().catch(() => {})}
-        onExit={api.exitRoom}
-        onNotify={api.notify}
+        onShowRanking={() => setRankingOpen(true)}
+        onStart={() => void game.startGame().catch(() => {})}
+        onPause={() => void game.pauseGame().catch(() => {})}
+        onSitOut={(sitOut) => void game.setSitOut(sitOut).catch(() => {})}
+        onRebuy={() => void game.rebuy().catch(() => {})}
+        onLeaveSeat={() => void game.leaveSeat().catch(() => {})}
+        onExit={game.exitRoom}
+        onNotify={notify}
       />
+
+      <VoiceWarning voice={voice} />
 
       <main className="main">
         <TableView
           state={state}
-          turnDeadline={api.turnDeadline}
-          onSit={(seat) => void api.takeSeat(seat).catch(() => {})}
+          turnDeadline={game.turnDeadline}
+          voiceParticipants={voice.participants}
+          voiceSpeaking={voice.speaking}
+          onSit={(seat) => void game.takeSeat(seat).catch(() => {})}
         />
         <SidePanel
-          logs={api.logs}
-          chat={api.chat}
+          logs={game.logs}
+          chat={game.chat}
           open={panelOpen}
           onClose={() => setPanelOpen(false)}
-          onSendChat={api.sendChat}
+          onSendChat={game.sendChat}
         />
       </main>
 
-      <ActionBar state={state} onAct={api.act} />
-      <Toasts api={api} />
+      <ActionBar state={state} onAct={game.act} />
+
+      {rankingOpen ? <Ranking youId={auth.user.id} onClose={() => setRankingOpen(false)} /> : null}
+      <Toasts game={game} />
     </div>
   );
 }
 
-function Toasts({ api }: { api: ReturnType<typeof useGame> }) {
-  if (api.toasts.length === 0) return null;
+function Toasts({ game }: { game: GameApi }) {
+  if (game.toasts.length === 0) return null;
   return (
     <div className="toasts">
-      {api.toasts.map((toast) => (
+      {game.toasts.map((toast) => (
         <button
           key={toast.id}
           type="button"
           className={`toast toast--${toast.kind}`}
-          onClick={() => api.dismissToast(toast.id)}
+          onClick={() => game.dismissToast(toast.id)}
         >
           {toast.text}
         </button>
