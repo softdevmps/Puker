@@ -1,0 +1,11 @@
+# Normaliza los finales de línea: se guardan como LF en el repo y git los
+# adapta al sistema de cada uno al trabajar. Evita diffs llenos de cambios
+# fantasma si alguien clona desde Mac o Linux.
+* text=auto eol=lf
+
+# Binarios: que git no los toque.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary

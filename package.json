@@ -1,0 +1,33 @@
+{
+  "name": "puker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Poker web (Texas Hold'em) para jugar con amigos desde PC o celular",
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n shared,server,client -c gray,cyan,magenta \"npm:dev:shared\" \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:shared": "npm -w @puker/shared run dev",
+    "dev:server": "npm -w @puker/server run dev",
+    "dev:client": "npm -w @puker/client run dev",
+    "build": "npm -w @puker/shared run build && npm -w @puker/server run build && npm -w @puker/client run build",
+    "start": "node server/dist/index.js",
+    "test": "npm -w @puker/shared run test && npm -w @puker/server run test",
+    "typecheck": "npm -w @puker/shared run build && npm -w @puker/server exec tsc --noEmit && npm -w @puker/client exec tsc --noEmit"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "esbuild@0.25.12": true
+  }
+}
