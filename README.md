@@ -1,8 +1,44 @@
 # Puker ♠ ♥ ♦ ♣
 
 Texas Hold'em por navegador para jugar con amigos, desde la compu o el celular.
-Con cuentas, ranking histórico, chat de texto y **voz en vivo**. Sin plata real:
-solo fichas.
+Con cuentas, ranking histórico, chat de texto y **voz en vivo**.
+La mesa usa fichas virtuales y lleva las cuentas de entradas, recompras y
+repartos en pesos entre amigos; no realiza cobros ni transferencias.
+
+## Partidas y reparto final
+
+- Cada jugador recibe 29.000 en 52 fichas: 10 azules de 50, 10 negras de 100,
+  10 verdes de 250, 10 rojas de 500, 10 grises de 1.000 y 2 amarillas de 5.000.
+- La entrada predeterminada es de $5.000 y la única recompra cuesta $4.000.
+  Los importes se pueden elegir al crear la mesa y quedan fijos al empezar.
+- Hacen falta al menos 3 jugadores. Al comenzar se registran las entradas y
+  se cierra la inscripción; quienes llegan después pueden mirar.
+- Si alguien queda sin fichas y conserva su recompra, no se reparten más
+  manos hasta que elija recomprar o retirarse. Una desconexión no decide por él.
+- Al quedar dos participantes con fichas, después de resolver las recompras,
+  la partida termina. Si una mano deja un solo superviviente, recibe el 100%.
+- El **cobro** de cada finalista es el pozo completo multiplicado por su
+  proporción de fichas. Su **neto** es ese cobro menos todo lo que aportó.
+  Por ejemplo, $23.000 al 60/40 da $13.800 y $9.200; con aportes de $5.000 y
+  $9.000, los netos son $8.800 y $200. Los redondeos conservan todos los centavos.
+- Retirarse de una partida ya iniciada mantiene el aporte en el pozo y pierde
+  el derecho al reparto. Si no queda ningún participante, el resumen indica
+  devolver los aportes.
+- Los aportes y resultados se guardan en SQLite y se consultan en
+  **Mis partidas y repartos**. Las manos en curso siguen en memoria: reiniciar
+  el servidor no reanuda una partida interrumpida ni calcula un reparto ficticio.
+
+## Perfiles y alias
+
+**Mi perfil** está disponible en el inicio y en el menú de la mesa. Permite
+editar el nombre visible, una descripción breve, la foto y el alias de transferencia.
+Las fotos JPG, PNG o WebP de hasta 5 MB se recortan al centro y se reducen a
+256 × 256 antes de guardarse en SQLite. Se puede reemplazar o quitar la foto.
+Los avatares aparecen en los asientos y junto a los finalistas.
+
+El reparto final y el historial muestran **Copiar alias** para cada finalista
+que lo haya cargado. Se consulta siempre el alias actual del perfil, incluso
+para partidas anteriores. Copiarlo no inicia una transferencia.
 
 ## Arrancar en desarrollo
 
@@ -112,6 +148,11 @@ Dos requisitos que no se pueden saltear:
 
 ## Deploy
 
+Para publicarlo en un alojamiento administrado, ver la
+[guía de Render](deploy/RENDER.md) y su `render.yaml`, o la
+[guía de Railway](deploy/RAILWAY.md) cuando acepte registros nuevos.
+La alternativa con VPS sigue debajo.
+
 El objetivo: un VPS chico (2 vCPU / 2 GB alcanza de sobra) con Docker. Para
 jugar desde Argentina conviene una región cercana como São Paulo, sobre todo
 por el TURN.
@@ -203,7 +244,7 @@ tanto el reloj del turno te hace fold automático para no trabar a los demás.
 | Comando | Qué hace |
 | --- | --- |
 | `npm run dev` | Los tres procesos de desarrollo |
-| `npm test` | Los 52 tests |
+| `npm test` | Pruebas del motor, cuentas, torneos y persistencia |
 | `npm run build` | Compila todo para producción |
 | `npm start` | Sirve web + juego en un solo proceso |
 | `npm run typecheck` | Chequeo de tipos de los tres paquetes |

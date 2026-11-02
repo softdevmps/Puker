@@ -1,6 +1,8 @@
 import { useState } from 'react';
 
 import { DEFAULT_SETTINGS, type AuthUser, type TableSettings } from '@puker/shared';
+import { ChipSet } from './ChipSet';
+import { Avatar } from './Avatar';
 
 interface Props {
   user: AuthUser;
@@ -11,14 +13,10 @@ interface Props {
   onJoin(code: string): Promise<void>;
   onError(message: string): void;
   onShowRanking(): void;
+  onShowHistory(): void;
+  onShowProfile(): void;
   onLogout(): void;
 }
-
-const STACK_PRESETS = [
-  { label: 'Corto', stack: 1000, sb: 10, bb: 20 },
-  { label: 'Normal', stack: 2000, sb: 10, bb: 20 },
-  { label: 'Largo', stack: 5000, sb: 25, bb: 50 },
-];
 
 export function Lobby({
   user,
@@ -29,26 +27,28 @@ export function Lobby({
   onJoin,
   onError,
   onShowRanking,
+  onShowHistory,
+  onShowProfile,
   onLogout,
 }: Props) {
   const [code, setCode] = useState(savedRoom);
   const [mode, setMode] = useState<'menu' | 'create' | 'join'>('menu');
 
-  const [preset, setPreset] = useState(1);
   const [maxSeats, setMaxSeats] = useState(DEFAULT_SETTINGS.maxSeats);
   const [turnTimeSec, setTurnTimeSec] = useState(DEFAULT_SETTINGS.turnTimeSec);
   const [allowRebuy, setAllowRebuy] = useState(true);
+  const [entryFee, setEntryFee] = useState(DEFAULT_SETTINGS.entryFee);
+  const [rebuyFee, setRebuyFee] = useState(DEFAULT_SETTINGS.rebuyFee);
 
   const handleCreate = async () => {
-    const chosen = STACK_PRESETS[preset] ?? STACK_PRESETS[1]!;
     try {
       await onCreate({
-        smallBlind: chosen.sb,
-        bigBlind: chosen.bb,
-        startingStack: chosen.stack,
+        ...DEFAULT_SETTINGS,
         maxSeats,
         turnTimeSec,
         allowRebuy,
+        entryFee,
+        rebuyFee,
       });
     } catch (error) {
       onError(error instanceof Error ? error.message : 'No se pudo crear la mesa');
@@ -72,6 +72,7 @@ export function Lobby({
           <h1 className="lobby__title">
             Puker <span className="lobby__suits">♠ ♥ ♦ ♣</span>
           </h1>
+          <button type="button" className="lobby__profile" onClick={onShowProfile}><Avatar src={user.avatarUrl} name={user.displayName} /><span>Mi perfil</span></button>
           <p className="lobby__subtitle">
             Hola, <strong>{user.displayName}</strong>. ¿Armamos una mesa?
           </p>
@@ -99,6 +100,7 @@ export function Lobby({
             <button type="button" className="btn btn--ghost btn--wide" onClick={onShowRanking}>
               Ver el ranking
             </button>
+            <button type="button" className="btn btn--ghost btn--wide" onClick={onShowHistory}>Mis partidas y repartos</button>
           </div>
         ) : null}
 
@@ -136,29 +138,22 @@ export function Lobby({
         {mode === 'create' ? (
           <div className="lobby__panel">
             <div className="field">
-              <span className="field__label">Fichas y ciegas</span>
-              <div className="segmented">
-                {STACK_PRESETS.map((option, index) => (
-                  <button
-                    key={option.label}
-                    type="button"
-                    className={`segmented__option${preset === index ? ' segmented__option--on' : ''}`}
-                    onClick={() => setPreset(index)}
-                  >
-                    <strong>{option.label}</strong>
-                    <small>
-                      {option.stack} · {option.sb}/{option.bb}
-                    </small>
-                  </button>
-                ))}
-              </div>
+              <span className="field__label">$29.000 por jugador · 52 fichas</span>
+              <ChipSet />
+              <span className="field__hint">Ciega chica: $50 · Ciega grande: $100</span>
             </div>
+
+            <div className="tournament-fees">
+              <label className="field"><span className="field__label">Entrada (pesos)</span><input className="field__input" type="number" min={1} max={1000000} step={1} value={entryFee} onChange={(event) => setEntryFee(Number(event.target.value))} /></label>
+              <label className="field"><span className="field__label">Recompra (pesos)</span><input className="field__input" type="number" min={1} max={1000000} step={1} value={rebuyFee} disabled={!allowRebuy} onChange={(event) => setRebuyFee(Number(event.target.value))} /></label>
+            </div>
+            <p className="field__hint">Mínimo 3 jugadores. Al quedar dos, se reparte el pozo completo según sus fichas. La inscripción se cierra al empezar.</p>
 
             <div className="field">
               <span className="field__label">Lugares en la mesa: {maxSeats}</span>
               <input
                 type="range"
-                min={2}
+                min={3}
                 max={9}
                 value={maxSeats}
                 onChange={(event) => setMaxSeats(Number(event.target.value))}
@@ -188,14 +183,14 @@ export function Lobby({
                 checked={allowRebuy}
                 onChange={(event) => setAllowRebuy(event.target.checked)}
               />
-              <span>Permitir recargar fichas al quedarse sin nada</span>
+              <span>Permitir una sola recarga por jugador al quedarse sin fichas</span>
             </label>
 
             <div className="lobby__actions">
               <button
                 type="button"
                 className="btn btn--primary btn--wide"
-                disabled={busy}
+                disabled={busy || !Number.isInteger(entryFee) || entryFee < 1 || entryFee > 1000000 || (allowRebuy && (!Number.isInteger(rebuyFee) || rebuyFee < 1 || rebuyFee > 1000000))}
                 onClick={handleCreate}
               >
                 {busy ? 'Creando...' : 'Crear mesa'}

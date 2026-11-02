@@ -1,0 +1,16 @@
+# Solo el código y los manifiestos entran en la imagen.
+.git
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.env
+.env.*
+**/.env
+**/.env.*
+**/data
+**/*.db
+**/*.db-wal
+**/*.db-shm
+deploy/certs
+**/*.log
+.DS_Store

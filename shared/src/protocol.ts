@@ -7,10 +7,19 @@
  */
 
 import type { Card } from './cards.js';
+import { CHIP_UNIT, STARTING_STACK } from './chips.js';
+import type { TournamentView } from './tournament.js';
 
 export const MAX_SEATS = 9;
 
 export interface TableSettings {
+  /** Cierra la partida al quedar como máximo dos jugadores. */
+  tournament: boolean;
+  /** Importes en pesos enteros; el reparto se calcula en centavos. */
+  entryFee: number;
+  rebuyFee: number;
+  /** Unidad indivisible de apuesta y reparto. */
+  chipUnit: number;
   /** Ciega chica. */
   smallBlind: number;
   /** Ciega grande. Es también la apuesta mínima. */
@@ -21,14 +30,18 @@ export interface TableSettings {
   turnTimeSec: number;
   /** Cantidad de asientos habilitados en la mesa (2..9). */
   maxSeats: number;
-  /** Si está activo, al quedarse sin fichas se recarga el stack inicial. */
+  /** Permite una única recarga del stack inicial por jugador y partida. */
   allowRebuy: boolean;
 }
 
 export const DEFAULT_SETTINGS: TableSettings = {
-  smallBlind: 10,
-  bigBlind: 20,
-  startingStack: 2000,
+  tournament: true,
+  entryFee: 5000,
+  rebuyFee: 4000,
+  chipUnit: CHIP_UNIT,
+  smallBlind: 50,
+  bigBlind: 100,
+  startingStack: STARTING_STACK,
   turnTimeSec: 30,
   maxSeats: 6,
   allowRebuy: true,
@@ -41,10 +54,21 @@ export interface AuthUser {
   username: string;
   displayName: string;
   avatarUrl: string | null;
+  bio: string;
+  transferAlias: string | null;
+  createdAt: number;
   /** Puede entrar con contraseña. */
   hasPassword: boolean;
   /** Tiene una cuenta de Google vinculada. */
   hasGoogle: boolean;
+}
+
+export interface ProfileUpdate {
+  displayName?: string;
+  bio?: string;
+  transferAlias?: string;
+  /** JPEG optimizado por el navegador; null quita la foto actual. */
+  avatarDataUrl?: string | null;
 }
 
 export interface AuthInfo {
@@ -95,8 +119,11 @@ export type Phase =
 export interface PublicPlayer {
   id: string;
   name: string;
+  avatarUrl?: string | null;
   seat: number;
   chips: number;
+  /** Ya consumió su única recarga en esta partida. */
+  rebuyUsed: boolean;
   /** Apostado en la calle actual. */
   bet: number;
   /** Apostado en toda la mano. */
@@ -168,6 +195,7 @@ export interface HandResult {
 }
 
 export interface GameState {
+  tournament: TournamentView | null;
   roomCode: string;
   settings: TableSettings;
   phase: Phase;
@@ -191,6 +219,8 @@ export interface GameState {
   /** Tu asiento, o null si estás mirando. */
   youSeat: number | null;
   youId: string;
+  /** Puede usar su recarga ahora (sin fichas y fuera de una mano activa). */
+  canRebuy: boolean;
   hostId: string | null;
   /** Acciones permitidas para ti ahora mismo (null si no es tu turno). */
   legal: LegalActions | null;
@@ -268,6 +298,7 @@ export interface ClientToServerEvents {
   'game:pause': (payload: Record<string, never>, ack: (res: Ack) => void) => void;
   'game:action': (payload: PlayerAction, ack: (res: Ack) => void) => void;
   'player:rebuy': (payload: Record<string, never>, ack: (res: Ack) => void) => void;
+  'player:withdraw': (payload: Record<string, never>, ack: (res: Ack) => void) => void;
   'settings:update': (payload: Partial<TableSettings>, ack: (res: Ack) => void) => void;
   'chat:send': (payload: { text: string }, ack: (res: Ack) => void) => void;
 

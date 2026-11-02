@@ -1,6 +1,8 @@
-import { formatChips, formatStack, type PublicPlayer } from '@puker/shared';
+import { chipBreakdown, formatChips, formatStack, type PublicPlayer } from '@puker/shared';
 
 import { PlayingCard } from './PlayingCard';
+import { ChipSet } from './ChipSet';
+import { Avatar } from './Avatar';
 
 interface Props {
   player: PublicPlayer;
@@ -58,6 +60,7 @@ export function Seat({
 
       <div className="seat__body">
         <div className="seat__head">
+          <Avatar src={player.avatarUrl} name={player.name} />
           {inVoice ? (
             <span
               className={`seat__mic${speaking ? ' seat__mic--on' : ''}`}
@@ -74,7 +77,13 @@ export function Seat({
           {player.isDealer ? <span className="seat__dealer" title="Reparte">D</span> : null}
         </div>
 
-        <div className="seat__chips">{formatStack(player.chips)}</div>
+        <div className="seat__chips">${formatStack(player.chips)}</div>
+        {isHero ? (
+          <div className="seat__inventory">
+            <span className="seat__inventory-label">{chipBreakdown(player.chips).reduce((sum, chip) => sum + chip.count, 0)} fichas · tu saldo</span>
+            <ChipSet amount={player.chips} compact />
+          </div>
+        ) : null}
 
         {player.handLabel ? <div className="seat__hand">{player.handLabel}</div> : null}
 

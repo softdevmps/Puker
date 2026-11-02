@@ -20,6 +20,8 @@ import { Server, type Socket } from 'socket.io';
 
 import {
   type Ack,
+  type GameState,
+  type TournamentResult,
   type ClientToServerEvents,
   type IceConfig,
   type LogEntry,
@@ -31,7 +33,7 @@ import {
 } from '@puker/shared';
 
 import { createAuthRouter } from './auth/routes.js';
-import { userFromCookieHeader } from './auth/sessions.js';
+import { userFromCookieHeader, userFromRequest } from './auth/sessions.js';
 import { config } from './config.js';
 import { Store, type UserRow } from './db/store.js';
 import { RoomManager, identityOf, normalizeCode, type PlayerIdentity, type Room } from './rooms.js';
@@ -85,6 +87,7 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
   const store = new Store(options.databaseFile ?? config.databaseFile);
   const manager = new RoomManager();
   const voice = new VoiceRooms();
+  manager.onTournamentChange = (record) => store.saveTournament(record);
 
   // Cada mano terminada se guarda para el ranking. Solo cuentan los jugadores
   // con cuenta: los asientos sin userId se ignoran.
@@ -114,10 +117,24 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
 
   app.set('trust proxy', 1); // detrás de Caddy/nginx, para que req.ip sea real
   app.use(compression());
+  app.use('/api/auth/profile', express.json({ limit: '300kb' }));
   app.use(express.json({ limit: '16kb' }));
   app.disable('x-powered-by');
 
-  app.use('/api/auth', createAuthRouter(store));
+  app.use('/api/auth', createAuthRouter(store, (user) => {
+    const player = identityOf(user);
+    for (const socket of io.sockets.sockets.values()) {
+      if (socket.data.user?.id === user.id) {
+        socket.data.user = user;
+        socket.data.player = player;
+      }
+    }
+    for (const code of manager.listCodes()) {
+      const room = manager.get(code)!;
+      room.table.updatePlayerName(player.playerId, player.name);
+      broadcast(code);
+    }
+  }));
 
   app.get('/api/health', (_req, res) => {
     res.json({
@@ -131,6 +148,15 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
   app.get('/api/ranking', (_req, res) => {
     const rows: RankingEntry[] = store.ranking(100);
     res.json({ ranking: rows });
+  });
+
+  app.get('/api/tournaments', (req, res) => {
+    const user = userFromRequest(req, store);
+    if (!user) { res.status(401).json({ error: 'Necesitás iniciar sesión' }); return; }
+    const profiles = profileReader();
+    res.json({ tournaments: store.tournamentsFor(user.id).map(({ userIds, ...record }) => ({
+      ...record, result: record.result ? withResultProfiles(record.result, profiles) : null,
+    })) });
   });
 
   app.get('/api/rooms/:code', (req, res) => {
@@ -189,19 +215,48 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
 
   const roomKey = (code: string): string => `room:${code}`;
 
+  // Las cuentas monetarias son históricas; la foto y el alias se leen del perfil actual.
+  function profileReader() {
+    const cache = new Map<string, { avatarUrl: string | null; transferAlias: string | null }>();
+    return (id: string) => {
+      if (!cache.has(id)) {
+        const user = /^u\d+$/.test(id) ? store.findUserById(Number(id.slice(1))) : null;
+        cache.set(id, { avatarUrl: user?.avatar_url ?? null, transferAlias: user?.transfer_alias ?? null });
+      }
+      return cache.get(id)!;
+    };
+  }
+
+  function withResultProfiles(result: TournamentResult, profiles: ReturnType<typeof profileReader>) {
+    return { ...result, players: result.players.map((p) => ({ ...p, ...profiles(p.id) })) };
+  }
+
+  function withProfiles(state: GameState, profiles = profileReader()): GameState {
+    return {
+      ...state,
+      players: state.players.map((p) => ({ ...p, avatarUrl: profiles(p.id).avatarUrl })),
+      tournament: state.tournament ? {
+        ...state.tournament,
+        participants: state.tournament.participants.map((p) => ({ ...p, ...profiles(p.id) })),
+        result: state.tournament.result ? withResultProfiles(state.tournament.result, profiles) : null,
+      } : null,
+    };
+  }
+
   function broadcast(code: string): void {
     const room = manager.get(code);
     if (!room) return;
 
     const sockets = io.sockets.adapter.rooms.get(roomKey(code));
     const pending: LogEntry[] = room.table.drainLog();
+    const profiles = profileReader();
 
     if (sockets) {
       for (const socketId of sockets) {
         const socket = io.sockets.sockets.get(socketId) as AppSocket | undefined;
         const playerId = socket?.data.player?.playerId;
         if (!socket || !playerId) continue;
-        socket.emit('state', room.table.getStateFor(playerId));
+        socket.emit('state', withProfiles(room.table.getStateFor(playerId), profiles));
       }
     }
 
@@ -232,7 +287,7 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
     const history = room.table.recentLog();
     if (history.length) socket.emit('log', history);
     for (const message of room.chat.slice(-20)) socket.emit('chat', message);
-    socket.emit('state', room.table.getStateFor(player.playerId));
+    socket.emit('state', withProfiles(room.table.getStateFor(player.playerId)));
   }
 
   /** Saca al socket de la conversación de voz y avisa a los demás. */
@@ -270,7 +325,7 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
         if (!outcome.seated) {
           socket.emit('toast', {
             kind: 'info',
-            text: 'La mesa está llena. Entrás como espectador y te sentás cuando se libere un lugar.',
+            text: 'Entrás como espectador: no hay asiento disponible o la inscripción ya está cerrada.',
           });
         }
         broadcast(code);
@@ -363,6 +418,15 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
       } catch (error) {
         ack(fail(error));
       }
+    });
+
+    socket.on('player:withdraw', (_payload, ack) => {
+      try {
+        const { room, player, code } = contextOf(socket);
+        room.table.withdraw(player.playerId);
+        ack(ok(undefined));
+        broadcast(code);
+      } catch (error) { ack(fail(error)); }
     });
 
     socket.on('settings:update', (payload, ack) => {

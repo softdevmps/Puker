@@ -34,6 +34,7 @@ import {
 } from '@puker/shared';
 
 import { secureRandom } from './rng.js';
+import { Tournament, type TournamentRecord } from './tournament.js';
 
 /** Pausa entre el final de una mano y el reparto de la siguiente. */
 const HANDOVER_MS = 6000;
@@ -116,6 +117,12 @@ export class Table {
   private logEntries: LogEntry[] = [];
   private logSeq = 0;
   private pendingLog: LogEntry[] = [];
+  /** La partida dura lo que la mesa; pausar o cambiar de asiento no reinicia estos datos. */
+  private rebuyUsed = new Set<string>();
+  private departedStacks = new Map<string, number>();
+  private pendingDepartures = new Set<string>();
+  private match: Tournament | null = null;
+  onTournamentChange: ((record: TournamentRecord) => void) | null = null;
 
   /** Se dispara al cerrar cada mano, para persistir el resultado. */
   onHandComplete: ((record: HandRecord) => void) | null = null;
@@ -158,7 +165,12 @@ export class Table {
       if (userId !== null) seat.userId = userId;
       seat.connected = true;
       seat.disconnectedAt = null;
+      if (!this.match) this.pendingDepartures.delete(playerId);
       return existing;
+    }
+
+    if (this.match && !this.match.canParticipate(playerId)) {
+      throw new Error('La inscripción está cerrada; podés mirar como espectador');
     }
 
     const index = seatIndex ?? this.firstFreeSeat();
@@ -170,7 +182,7 @@ export class Table {
       playerId,
       userId,
       name,
-      chips: this.settings.startingStack,
+      chips: this.departedStacks.get(playerId) ?? this.settings.startingStack,
       inHand: false,
       folded: false,
       allIn: false,
@@ -199,19 +211,61 @@ export class Table {
     const index = this.findSeat(playerId);
     if (index === null) return;
     const seat = this.seats[index]!;
-
-    if (seat.inHand && !seat.folded && this.isHandLive()) {
-      this.applyFold(index, 'se fue de la mesa');
-      this.seats[index] = null;
-      this.addLog(`${seat.name} dejó la mesa`, 'system');
-      this.afterAction();
-    } else {
-      this.seats[index] = null;
-      this.addLog(`${seat.name} dejó la mesa`, 'system');
+    this.match?.withdraw(playerId);
+    if (seat.inHand && this.isHandLive()) {
+      // Conserva aportes y cartas hasta cerrar la mano, incluso si ya hizo fold.
+      this.pendingDepartures.add(playerId);
+      seat.sittingOut = true;
+      if (!seat.folded && !seat.allIn) this.applyFold(index, 'se fue de la mesa');
+      if (this.turn === index) this.afterAction();
+      else if (this.contenders().length <= 1) this.endHand();
+      this.persistTournament();
+      return;
     }
-
-    if (this.hostId === playerId) this.reassignHost();
+    this.syncTournament();
+    this.removeSeat(index);
     this.ensureEnoughPlayers();
+  }
+
+  private removeSeat(index: number): void {
+    const seat = this.seats[index];
+    if (!seat) return;
+    this.departedStacks.set(seat.playerId, seat.chips);
+    this.pendingDepartures.delete(seat.playerId);
+    this.seats[index] = null;
+    this.addLog(`${seat.name} dejó la mesa`, 'system');
+    if (this.hostId === seat.playerId) this.reassignHost();
+  }
+
+  withdraw(playerId: string): void {
+    if (!this.match || !this.match.canParticipate(playerId)) throw new Error('No estás participando de esta partida');
+    this.leave(playerId);
+  }
+
+  private tournamentSeats(): Seat[] {
+    return this.seats.filter((seat): seat is Seat => seat !== null);
+  }
+
+  private persistTournament(): void {
+    if (!this.match || !this.onTournamentChange) return;
+    this.onTournamentChange(this.match.record(this.tournamentSeats()));
+  }
+
+  private syncTournament(): void {
+    if (!this.match || this.isHandLive()) return;
+    const wasFinished = this.match.status === 'finished';
+    this.match.reconcile(this.tournamentSeats());
+    if (this.match.status !== 'playing') this.nextHandAt = null;
+    if (this.match.status === 'finished') {
+      this.running = false;
+      if (!wasFinished) this.addLog('Partida terminada. El pozo se reparte según las fichas de los finalistas.', 'result');
+    }
+    this.persistTournament();
+  }
+
+  updatePlayerName(playerId: string, name: string): void {
+    const seat = this.seatOf(playerId);
+    if (seat) seat.name = name;
   }
 
   setConnected(playerId: string, connected: boolean, now = Date.now()): void {
@@ -222,6 +276,7 @@ export class Table {
   }
 
   setSittingOut(playerId: string, sitOut: boolean): void {
+    if (this.match) throw new Error('La partida ya comenzó. Para abandonarla, elegí retirarte de la partida.');
     const seat = this.seatOf(playerId);
     if (!seat) throw new Error('No estás sentado en la mesa');
     seat.sittingOut = sitOut;
@@ -234,12 +289,17 @@ export class Table {
     const seat = this.seatOf(playerId);
     if (!seat) throw new Error('No estás sentado en la mesa');
     if (!this.settings.allowRebuy) throw new Error('La recarga está desactivada en esta mesa');
+    if (this.rebuyUsed.has(playerId)) throw new Error('Ya usaste tu única recarga de esta partida');
     if (seat.chips > 0) throw new Error('Todavía te quedan fichas');
     if (seat.inHand && this.isHandLive()) throw new Error('Esperá a que termine la mano');
+    if (this.settings.tournament && !this.match) throw new Error('La partida todavía no empezó');
+    this.match?.rebuy(playerId, this.settings.startingStack);
 
+    this.rebuyUsed.add(playerId);
     seat.chips = this.settings.startingStack;
     seat.sittingOut = false;
     this.addLog(`${seat.name} recargó ${formatChips(seat.chips)} fichas`, 'system');
+    this.syncTournament();
     this.ensureEnoughPlayers();
   }
 
@@ -262,6 +322,9 @@ export class Table {
   }
 
   updateSettings(patch: Partial<TableSettings>): void {
+    if (this.match || (this.handNumber > 0 && patch.tournament !== undefined && patch.tournament !== this.settings.tournament)) {
+      throw new Error('Las reglas y los importes quedan fijos al iniciar la partida');
+    }
     if (this.isHandLive()) throw new Error('No se pueden cambiar las reglas con una mano en curso');
 
     const merged = { ...this.settings, ...patch };
@@ -276,6 +339,7 @@ export class Table {
       if (free !== null) {
         this.seats[free] = seat;
       } else {
+        this.departedStacks.set(seat.playerId, seat.chips);
         this.addLog(`${seat.name} quedó fuera de la mesa al reducir los asientos`, 'system');
       }
       this.seats[i] = null;
@@ -291,11 +355,18 @@ export class Table {
 
   private normalizeSettings(): void {
     const s = this.settings;
+    s.tournament = Boolean(s.tournament);
+    s.entryFee = clampInt(s.entryFee, 1, 1_000_000, DEFAULT_SETTINGS.entryFee);
+    s.rebuyFee = clampInt(s.rebuyFee, 1, 1_000_000, DEFAULT_SETTINGS.rebuyFee);
+    s.chipUnit = s.chipUnit === 1 ? 1 : DEFAULT_SETTINGS.chipUnit;
     s.smallBlind = clampInt(s.smallBlind, 1, 100_000, DEFAULT_SETTINGS.smallBlind);
     s.bigBlind = clampInt(s.bigBlind, s.smallBlind + 1, 200_000, s.smallBlind * 2);
     s.startingStack = clampInt(s.startingStack, s.bigBlind * 2, 10_000_000, DEFAULT_SETTINGS.startingStack);
+    s.smallBlind = Math.ceil(s.smallBlind / s.chipUnit) * s.chipUnit;
+    s.bigBlind = Math.max(s.smallBlind + s.chipUnit, Math.ceil(s.bigBlind / s.chipUnit) * s.chipUnit);
+    s.startingStack = Math.max(s.bigBlind * 2, Math.ceil(s.startingStack / s.chipUnit) * s.chipUnit);
     s.turnTimeSec = clampInt(s.turnTimeSec, 5, 300, DEFAULT_SETTINGS.turnTimeSec);
-    s.maxSeats = clampInt(s.maxSeats, 2, MAX_SEATS, DEFAULT_SETTINGS.maxSeats);
+    s.maxSeats = clampInt(s.maxSeats, s.tournament ? 3 : 2, MAX_SEATS, DEFAULT_SETTINGS.maxSeats);
     s.allowRebuy = Boolean(s.allowRebuy);
   }
 
@@ -306,7 +377,7 @@ export class Table {
     const out: number[] = [];
     for (let i = 0; i < this.seats.length; i++) {
       const seat = this.seats[i];
-      if (seat && !seat.sittingOut && seat.chips > 0) out.push(i);
+      if (seat && seat.chips > 0 && (this.match ? this.match.canParticipate(seat.playerId) : !seat.sittingOut)) out.push(i);
     }
     return out;
   }
@@ -318,6 +389,19 @@ export class Table {
   start(playerId: string): void {
     if (this.hostId && playerId !== this.hostId) throw new Error('Solo el anfitrión puede empezar');
     if (this.running) throw new Error('La partida ya está en marcha');
+    if (this.match?.status === 'finished') throw new Error('La partida terminó; creá otra mesa para volver a jugar');
+    if (this.match?.status === 'awaiting-rebuy') throw new Error('Falta decidir una recompra');
+    if (this.isHandLive()) {
+      this.running = true;
+      this.addLog('Partida reanudada; continúa la mano actual.', 'system');
+      return;
+    }
+    if (this.settings.tournament && !this.match) {
+      const entrants = this.eligibleSeats().map((index) => this.seats[index]!);
+      if (entrants.length < 3) throw new Error('Hacen falta al menos 3 jugadores para terminar con 2 finalistas');
+      this.match = new Tournament(this.code, { ...this.settings }, entrants);
+      this.persistTournament();
+    }
     if (this.eligibleSeats().length < 2) throw new Error('Hacen falta al menos 2 jugadores con fichas');
 
     this.running = true;
@@ -334,12 +418,14 @@ export class Table {
   }
 
   private ensureEnoughPlayers(): void {
+    if (this.match && this.match.status !== 'playing') return;
     if (this.running && !this.isHandLive() && this.nextHandAt === null && this.eligibleSeats().length >= 2) {
       this.nextHandAt = Date.now() + 1500;
     }
   }
 
   private beginHand(): void {
+    if (this.match && this.match.status !== 'playing') return;
     const eligible = this.eligibleSeats();
     if (eligible.length < 2) {
       this.phase = 'waiting';
@@ -589,7 +675,10 @@ export class Table {
           action.type === 'allin' ? legal.maxRaiseTo : Math.floor(Number(action.amount));
 
         if (!Number.isFinite(target)) throw new Error('Monto inválido');
-        if (action.type !== 'allin' && !legal.canBet && !legal.canRaise) {
+        if (target % this.settings.chipUnit !== 0) {
+          throw new Error(`Las apuestas deben ser múltiplos de ${this.settings.chipUnit}`);
+        }
+        if ((action.type !== 'allin' || target > this.currentBet) && !legal.canBet && !legal.canRaise) {
           throw new Error('No podés subir en este momento');
         }
         if (target <= this.currentBet && target < legal.maxRaiseTo) {
@@ -902,7 +991,8 @@ export class Table {
         const best = Math.max(...eligible.map((s) => hands.get(s)!.score));
         const winners = eligible.filter((s) => hands.get(s)!.score === best);
 
-        const share = Math.floor(pot.amount / winners.length);
+        const unit = this.settings.chipUnit;
+        const share = Math.floor(pot.amount / unit / winners.length) * unit;
         let remainder = pot.amount - share * winners.length;
 
         // Las fichas que no se pueden partir van al primero a la izquierda del botón.
@@ -910,8 +1000,8 @@ export class Table {
         for (const seatIndex of ordered) {
           let amount = share;
           if (remainder > 0) {
-            amount += 1;
-            remainder -= 1;
+            amount += unit;
+            remainder -= unit;
           }
           this.seats[seatIndex]!.chips += amount;
           this.seats[seatIndex]!.wonLast += amount;
@@ -992,6 +1082,10 @@ export class Table {
     this.phase = 'handover';
     const extra = Math.min(shown.filter((s) => !s.byFold).length, 4) * SHOWDOWN_EXTRA_MS;
     this.nextHandAt = Date.now() + HANDOVER_MS + extra;
+    this.syncTournament();
+    for (let i = 0; i < this.seats.length; i++) {
+      if (this.seats[i] && this.pendingDepartures.has(this.seats[i]!.playerId)) this.removeSeat(i);
+    }
   }
 
   /** Ordena asientos empezando por el primero a la izquierda del botón. */
@@ -1016,6 +1110,8 @@ export class Table {
       const seat = this.seats[i];
       if (!seat || seat.connected || seat.disconnectedAt === null) continue;
       if (now - seat.disconnectedAt > RECONNECT_GRACE_MS) {
+        // Una desconexión no elimina a un participante ni decide su recompra.
+        if (this.match) continue;
         this.addLog(`${seat.name} se desconectó y deja la mesa`, 'system');
         this.leave(seat.playerId);
         changed = true;
@@ -1037,7 +1133,7 @@ export class Table {
         this.applyFold(seatIndex, 'tiempo');
       }
 
-      if (seat.missedTurns >= 2 && !seat.connected) {
+      if (seat.missedTurns >= 2 && !seat.connected && !this.match) {
         seat.sittingOut = true;
         this.addLog(`${seat.name} queda de descanso por inactividad`, 'system');
       }
@@ -1063,7 +1159,7 @@ export class Table {
     }
 
     // Reanudar si volvió a haber gente.
-    if (this.running && this.phase === 'waiting' && this.nextHandAt === null) {
+    if (this.running && this.phase === 'waiting' && this.nextHandAt === null && (!this.match || this.match.status === 'playing')) {
       if (this.eligibleSeats().length >= 2) {
         this.nextHandAt = now + 1500;
         changed = true;
@@ -1124,6 +1220,7 @@ export class Table {
         name: seat.name,
         seat: i,
         chips: seat.chips,
+        rebuyUsed: this.rebuyUsed.has(seat.playerId),
         bet: seat.bet,
         committed: seat.committed,
         status: this.statusOf(seat),
@@ -1147,6 +1244,7 @@ export class Table {
     const potTotal = this.pots.reduce((sum, pot) => sum + pot.amount, 0);
 
     return {
+      tournament: this.match?.view(this.tournamentSeats()) ?? null,
       roomCode: this.code,
       settings: this.settings,
       phase: this.phase,
@@ -1162,6 +1260,10 @@ export class Table {
       serverNow: Date.now(),
       youSeat,
       youId: playerId,
+      canRebuy: youSeat !== null && this.settings.allowRebuy &&
+        (!this.settings.tournament || this.match?.entries.get(playerId)?.status === 'rebuy') &&
+        !this.rebuyUsed.has(playerId) && this.seats[youSeat]!.chips === 0 &&
+        !(this.seats[youSeat]!.inHand && this.isHandLive()),
       hostId: this.hostId,
       legal: youSeat === null ? null : this.legalActions(youSeat),
       lastResult: this.lastResult,
@@ -1179,7 +1281,13 @@ export class Table {
   }
 
   private pausedReason(): string | null {
+    if (this.match?.status === 'finished') return 'Partida terminada';
+    if (this.match?.status === 'awaiting-rebuy') {
+      const names = [...this.match.entries.values()].filter((p) => p.status === 'rebuy').map((p) => p.name);
+      return `Esperando recompra o retiro de ${names.join(', ')}`;
+    }
     if (this.isHandLive()) return null;
+    if (this.settings.tournament && !this.match) return 'Esperando al menos 3 jugadores para empezar';
     if (!this.running) {
       return this.eligibleSeats().length < 2
         ? 'Esperando jugadores (hacen falta 2 con fichas)'

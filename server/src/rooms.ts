@@ -13,6 +13,7 @@ import { type ChatMessage, type TableSettings, sanitizeChat } from '@puker/share
 
 import { makeRoomCode } from './rng.js';
 import { Table, type HandRecord } from './table.js';
+import type { TournamentRecord } from './tournament.js';
 
 /** Sala vacía más de esto se borra sola. */
 const IDLE_ROOM_TTL_MS = 2 * 60 * 60 * 1000;
@@ -48,6 +49,7 @@ export class RoomManager {
 
   /** Se invoca al cerrar cada mano en cualquier mesa. Lo cablea el servidor. */
   onHandComplete: ((record: HandRecord) => void) | null = null;
+  onTournamentChange: ((record: TournamentRecord) => void) | null = null;
 
   get size(): number {
     return this.rooms.size;
@@ -74,6 +76,7 @@ export class RoomManager {
     const code = this.freshCode();
     const table = new Table(code, settings);
     table.onHandComplete = (record) => this.onHandComplete?.(record);
+    table.onTournamentChange = (record) => this.onTournamentChange?.(record);
 
     const room: Room = {
       table,

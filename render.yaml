@@ -1,0 +1,30 @@
+# Servicio único: React + Express/Socket.IO + SQLite persistente.
+# Crear estos recursos en Render es pago; revisar el importe antes de confirmar.
+services:
+  - type: web
+    name: puker
+    runtime: node
+    plan: starter
+    region: virginia
+    numInstances: 1
+    autoDeployTrigger: off
+    buildCommand: npm ci --include=dev && npm run build && npm prune --omit=dev
+    startCommand: node server/dist/index.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: "3001"
+      - key: DATABASE_FILE
+        value: /var/data/puker.db
+      - key: SESSION_SECRET
+        generateValue: true
+    disk:
+      name: puker-data
+      mountPath: /var/data
+      sizeGB: 1

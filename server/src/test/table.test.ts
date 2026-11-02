@@ -17,6 +17,8 @@ interface Harness {
 
 function makeTable(playerCount: number, settings: Partial<TableSettings> = {}): Harness {
   const table = new Table('TEST', {
+    tournament: false,
+    chipUnit: 1,
     smallBlind: 10,
     bigBlind: 20,
     startingStack: 1000,
@@ -56,6 +58,117 @@ function makeTable(playerCount: number, settings: Partial<TableSettings> = {}): 
 }
 
 const seatOf = (h: Harness, playerId: string) => h.table.findSeat(playerId)!;
+
+test('all-in no permite subir si un all-in corto no reabrió las apuestas', () => {
+  const h = makeTable(3);
+  h.table.seats[1]!.chips = 30;
+  h.table.start(h.ids[0]!);
+  h.act({ type: 'call' });
+  h.act({ type: 'allin' });
+  h.act({ type: 'call' });
+  assert.equal(h.table.getStateFor(h.ids[0]!).legal!.canRaise, false);
+  assert.throws(() => h.act({ type: 'allin' }), /No podés subir/);
+  assert.equal(h.table.seats[0]!.chips, 980);
+  h.act({ type: 'call' });
+});
+
+test('cada jugador tiene una sola recarga por mesa y una mesa nueva renueva el cupo', () => {
+  const table = new Table('ONCE', { tournament: false });
+  for (const id of ['a', 'b']) {
+    table.sit(id, id);
+    table.seatOf(id)!.chips = 0;
+    assert.equal(table.getStateFor(id).canRebuy, true);
+    table.rebuy(id);
+    assert.equal(table.seatOf(id)!.chips, 29_000);
+    assert.equal(table.getStateFor(id).players.find((p) => p.id === id)!.rebuyUsed, true);
+    table.seatOf(id)!.chips = 0;
+    assert.equal(table.getStateFor(id).canRebuy, false);
+    assert.throws(() => table.rebuy(id), /única recarga/);
+    assert.equal(table.seatOf(id)!.chips, 0);
+  }
+  const next = new Table('NEXT', { tournament: false });
+  next.sit('a', 'a');
+  next.seatOf('a')!.chips = 0;
+  next.rebuy('a');
+  assert.equal(next.seatOf('a')!.chips, 29_000);
+});
+
+test('salir, reconectar y cambiar de asiento no regala fichas ni renueva la recarga', () => {
+  const table = new Table('ONCE', { tournament: false });
+  table.sit('a', 'a');
+  table.seatOf('a')!.chips = 750;
+  table.leave('a');
+  table.sit('a', 'a');
+  assert.equal(table.seatOf('a')!.chips, 750);
+  table.seatOf('a')!.chips = 0;
+  table.rebuy('a');
+  table.seatOf('a')!.chips = 0;
+  table.moveSeat('a', 2);
+  table.setConnected('a', false, 0);
+  table.tick(90_001);
+  assert.equal(table.seatOf('a'), null);
+  table.sit('a', 'a');
+  assert.equal(table.seatOf('a')!.chips, 0);
+  assert.equal(table.getStateFor('a').canRebuy, false);
+  assert.throws(() => table.rebuy('a'), /única recarga/);
+  table.updateSettings({ allowRebuy: false });
+  table.updateSettings({ allowRebuy: true });
+  assert.throws(() => table.rebuy('a'), /única recarga/);
+});
+
+test('los intentos inválidos no consumen la recarga y no se puede recargar durante un all-in', () => {
+  const table = new Table('ONCE', { tournament: false, allowRebuy: false });
+  table.sit('a', 'a');
+  table.sit('b', 'b');
+  assert.throws(() => table.rebuy('a'), /desactivada/);
+  table.updateSettings({ allowRebuy: true });
+  assert.throws(() => table.rebuy('a'), /Todavía/);
+  table.start('a');
+  table.act('a', { type: 'allin' });
+  assert.equal(table.getStateFor('a').canRebuy, false);
+  assert.throws(() => table.rebuy('a'), /termine la mano/);
+  assert.equal(table.getStateFor('a').players.find((p) => p.id === 'a')!.rebuyUsed, false);
+});
+
+test('las mesas nuevas reparten 29.000 y rechazan apuestas que no se pagan con fichas de 50', () => {
+  const table = new Table('CHIP', { tournament: false });
+  table.sit('a', 'A');
+  table.sit('b', 'B');
+  assert.equal(table.seatOf('a')!.chips, 29_000);
+  assert.equal(table.seatOf('b')!.chips, 29_000);
+  table.start('a');
+  assert.equal(table.getStateFor('a').totalPot, 150);
+  assert.throws(() => table.act('a', { type: 'raise', amount: 225 }), /múltiplos de 50/);
+  assert.equal(table.getStateFor('a').totalPot, 150);
+  table.act('a', { type: 'raise', amount: 250 });
+  table.act('b', { type: 'fold' });
+  table.seatOf('b')!.chips = 0;
+  table.rebuy('b');
+  assert.equal(table.seatOf('b')!.chips, 29_000);
+});
+
+test('un empate de 450 reparte 250 y 200 sin fraccionar fichas de 50', () => {
+  const h = makeTable(3, { chipUnit: 50, smallBlind: 50, bigBlind: 150, startingStack: 29_000 });
+  const total = h.totalChips();
+  h.table.start(h.ids[0]!);
+  let guard = 0;
+  while (h.table.phase !== 'river' && guard++ < 20) {
+    const legal = h.table.legalActions(seatOf(h, h.current()!))!;
+    h.act({ type: legal.canCheck ? 'check' : 'call' });
+  }
+  assert.equal(h.table.phase, 'river');
+  h.table.board = ['Ah', 'Kh', 'Qh', 'Jh', 'Th'];
+  h.table.seats[0]!.holeCards = ['2c', '3c'];
+  h.table.seats[1]!.holeCards = ['4c', '5c'];
+  h.table.seats[2]!.holeCards = ['6c', '7c'];
+  h.act({ type: 'fold' });
+  h.act({ type: 'check' });
+  h.act({ type: 'check' });
+  const payouts = h.table.lastResult!.payouts;
+  assert.deepEqual(payouts.map((p) => [p.seat, p.amount]), [[2, 250], [0, 200]]);
+  assert.equal(h.totalChips(), total);
+  assert.ok(h.table.seats.every((s) => !s || s.chips % 50 === 0));
+});
 
 test('las ciegas se ponen y el turno abre en la posición correcta con 3 jugadores', () => {
   const h = makeTable(3);
@@ -334,6 +447,9 @@ test('el jugador que se va de la mesa en medio de la mano no bloquea a los demá
     state.turnSeat !== null || state.phase === 'handover',
     'el juego siguió: o hay turno nuevo o la mano terminó',
   );
+  assert.equal(h.table.occupiedCount, 3, 'el asiento conserva sus aportes hasta cerrar la mano');
+  assert.equal(h.table.seatOf(turno)!.folded, true);
+  h.act({ type: 'fold' });
   assert.equal(h.table.occupiedCount, 2);
 });
 
@@ -439,7 +555,9 @@ function randomAction(table: Table, seat: number, rnd: () => number): PlayerActi
     const amount = legal.minRaiseTo + (span > 0 ? Math.floor(rnd() * (span + 1)) : 0);
     opciones.push({ type: legal.canBet ? 'bet' : 'raise', amount });
   }
-  opciones.push({ type: 'allin' });
+  if (legal.canBet || legal.canRaise || legal.callAmount === table.seats[seat]!.chips) {
+    opciones.push({ type: 'allin' });
+  }
 
   return opciones[Math.floor(rnd() * opciones.length)]!;
 }

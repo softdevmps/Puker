@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 
-import { formatChips, formatStack, type GameState } from '@puker/shared';
+import { chipBreakdown, formatChips, formatStack, type GameState } from '@puker/shared';
 
 import { betPosition, displayIndexOf, seatPosition } from '../lib/layout';
 import { useCountdown } from '../lib/useCountdown';
@@ -104,7 +104,7 @@ export function TableView({
         const player = bySeat.get(seat);
 
         return (
-          <div className="seat-slot" key={`seat-${seat}`} style={position}>
+          <div className={`seat-slot${seat === state.youSeat ? ' seat-slot--hero' : ''}`} key={`seat-${seat}`} style={position}>
             {player ? (
               <Seat
                 player={player}
@@ -128,8 +128,12 @@ export function TableView({
         .map((player) => {
           const displayIndex = displayIndexOf(player.seat, state.youSeat, total);
           return (
-            <div className="bet-chip" key={`bet-${player.seat}`} style={betPosition(displayIndex, total)}>
-              <span className="bet-chip__dot" />
+            <div className={`bet-chip${player.seat === state.youSeat ? ' bet-chip--hero' : ''}`} key={`bet-${player.seat}`} style={betPosition(displayIndex, total)}>
+              <span className="bet-chip__tokens" aria-hidden="true">
+                {chipBreakdown(player.bet).map((chip) => (
+                  <span key={chip.value} className={`poker-chip poker-chip--mini poker-chip--${chip.color}`} title={`${chip.count} × $${chip.value}`} />
+                ))}
+              </span>
               {formatStack(player.bet)}
             </div>
           );

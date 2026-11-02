@@ -3,10 +3,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActionBar } from './components/ActionBar';
 import { AuthScreen } from './components/AuthScreen';
 import { Lobby } from './components/Lobby';
+import { Profile } from './components/Profile';
 import { Ranking } from './components/Ranking';
 import { SidePanel } from './components/SidePanel';
 import { TableView } from './components/TableView';
 import { TopBar } from './components/TopBar';
+import { TournamentHistory, TournamentPanel } from './components/TournamentPanel';
 import { VoiceWarning } from './components/VoiceBar';
 import { sounds } from './lib/sound';
 import { useVoice } from './lib/useVoice';
@@ -18,6 +20,8 @@ export function App() {
   const game = useGame(auth.user !== null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [rankingOpen, setRankingOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const { state, notify } = game;
 
@@ -96,12 +100,16 @@ export function App() {
           onJoin={game.joinRoom}
           onError={(message) => notify('error', message)}
           onShowRanking={() => setRankingOpen(true)}
+          onShowHistory={() => setHistoryOpen(true)}
+          onShowProfile={() => setProfileOpen(true)}
           onLogout={() => void auth.logout()}
         />
         {rankingOpen ? (
           <Ranking youId={auth.user.id} onClose={() => setRankingOpen(false)} />
         ) : null}
         <Toasts game={game} />
+        {historyOpen ? <TournamentHistory onClose={() => setHistoryOpen(false)} /> : null}
+        {profileOpen ? <Profile user={auth.user} onSave={auth.updateProfile} onClose={() => setProfileOpen(false)} /> : null}
       </>
     );
   }
@@ -116,6 +124,7 @@ export function App() {
         onToggleMuted={game.toggleMuted}
         onTogglePanel={() => setPanelOpen((open) => !open)}
         onShowRanking={() => setRankingOpen(true)}
+        onShowProfile={() => setProfileOpen(true)}
         onStart={() => void game.startGame().catch(() => {})}
         onPause={() => void game.pauseGame().catch(() => {})}
         onSitOut={(sitOut) => void game.setSitOut(sitOut).catch(() => {})}
@@ -126,6 +135,7 @@ export function App() {
       />
 
       <VoiceWarning voice={voice} />
+      <TournamentPanel state={state} onRebuy={game.rebuy} onWithdraw={game.withdraw} />
 
       <main className="main">
         <TableView
@@ -147,6 +157,7 @@ export function App() {
       <ActionBar state={state} onAct={game.act} />
 
       {rankingOpen ? <Ranking youId={auth.user.id} onClose={() => setRankingOpen(false)} /> : null}
+      {profileOpen ? <Profile user={auth.user} onSave={auth.updateProfile} onClose={() => setProfileOpen(false)} /> : null}
       <Toasts game={game} />
     </div>
   );

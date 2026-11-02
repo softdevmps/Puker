@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import { formatChips, type GameState } from '@puker/shared';
+import { formatChips, formatPesos, type GameState } from '@puker/shared';
 
 import type { VoiceApi } from '../lib/useVoice';
 import { VoiceBar } from './VoiceBar';
@@ -13,6 +13,7 @@ interface Props {
   onToggleMuted(): void;
   onTogglePanel(): void;
   onShowRanking(): void;
+  onShowProfile(): void;
   onStart(): void;
   onPause(): void;
   onSitOut(sitOut: boolean): void;
@@ -30,6 +31,7 @@ export function TopBar({
   onToggleMuted,
   onTogglePanel,
   onShowRanking,
+  onShowProfile,
   onStart,
   onPause,
   onSitOut,
@@ -41,7 +43,11 @@ export function TopBar({
   const [menuOpen, setMenuOpen] = useState(false);
   const you = state.players.find((player) => player.seat === state.youSeat);
   const isHost = state.hostId !== null && state.hostId === state.youId;
-  const canStart = isHost && !state.running;
+  const canStart = isHost && !state.running && state.tournament?.status !== 'finished';
+  const minimumPlayers = state.settings.tournament && !state.tournament ? 3 : 2;
+  const enoughPlayers = state.players.filter((p) => p.chips > 0 && p.status !== 'sitting-out').length >= minimumPlayers;
+  const entry = state.tournament?.participants.find((p) => p.id === state.youId);
+  const confirmLeave = () => !entry || !['active', 'rebuy'].includes(entry.status) || window.confirm('¿Retirarte de la partida? Tu aporte queda en el pozo y perdés el derecho a participar del reparto.');
 
   const share = async () => {
     const url = `${window.location.origin}/?sala=${state.roomCode}`;
@@ -90,8 +96,8 @@ export function TopBar({
 
       <div className="topbar__buttons">
         {canStart ? (
-          <button type="button" className="btn btn--small btn--primary" onClick={onStart}>
-            Empezar
+          <button type="button" className="btn btn--small btn--primary" disabled={!enoughPlayers || state.tournament?.status === 'awaiting-rebuy'} onClick={onStart} title={`Se necesitan al menos ${minimumPlayers} jugadores`}>
+            {state.handNumber > 0 ? 'Continuar' : 'Empezar'}
           </button>
         ) : null}
         {isHost && state.running ? (
@@ -119,6 +125,7 @@ export function TopBar({
         <>
           <div className="sheet__backdrop" onClick={() => setMenuOpen(false)} />
           <div className="sheet">
+            <button type="button" className="sheet__item" onClick={() => { setMenuOpen(false); onShowProfile(); }}>Mi perfil</button>
             <button
               type="button"
               className="sheet__item"
@@ -141,7 +148,13 @@ export function TopBar({
               {muted ? '🔔 Activar avisos' : '🔇 Silenciar avisos'}
             </button>
 
-            {you && you.chips <= 0 && state.settings.allowRebuy ? (
+            {you && state.settings.allowRebuy ? (
+              <div className="sheet__item">
+                {you.rebuyUsed ? 'Recarga usada · 0 disponibles' : 'Una recarga disponible por partida'}
+              </div>
+            ) : null}
+
+            {state.canRebuy ? (
               <button
                 type="button"
                 className="sheet__item sheet__item--accent"
@@ -150,11 +163,11 @@ export function TopBar({
                   setMenuOpen(false);
                 }}
               >
-                Recargar {formatChips(state.settings.startingStack)} fichas
+                {state.settings.tournament ? `Recomprar por ${formatPesos(state.settings.rebuyFee * 100)}` : `Recargar ${formatChips(state.settings.startingStack)} fichas (única recarga)`}
               </button>
             ) : null}
 
-            {you ? (
+            {you && !state.tournament ? (
               <button
                 type="button"
                 className="sheet__item"
@@ -172,11 +185,12 @@ export function TopBar({
                 type="button"
                 className="sheet__item"
                 onClick={() => {
+                  if (!confirmLeave()) return;
                   onLeaveSeat();
                   setMenuOpen(false);
                 }}
               >
-                Levantarme de la mesa
+                {state.tournament && !state.tournament.result ? 'Retirarme de la partida' : 'Levantarme de la mesa'}
               </button>
             ) : null}
 
@@ -184,6 +198,7 @@ export function TopBar({
               type="button"
               className="sheet__item sheet__item--danger"
               onClick={() => {
+                if (!confirmLeave()) return;
                 setMenuOpen(false);
                 onExit();
               }}

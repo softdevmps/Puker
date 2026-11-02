@@ -80,13 +80,14 @@ export interface GameApi {
   createRoom(settings?: Partial<TableSettings>): Promise<void>;
   joinRoom(code: string): Promise<void>;
   exitRoom(): void;
-  act(action: PlayerAction): void;
+  act(action: PlayerAction): Promise<void>;
   startGame(): Promise<void>;
   pauseGame(): Promise<void>;
   setSitOut(sitOut: boolean): Promise<void>;
   takeSeat(seat: number): Promise<void>;
   leaveSeat(): Promise<void>;
   rebuy(): Promise<void>;
+  withdraw(): Promise<void>;
   updateSettings(patch: Partial<TableSettings>): Promise<void>;
   sendChat(text: string): Promise<void>;
   dismissToast(id: number): void;
@@ -252,7 +253,7 @@ export function useGame(signedIn: boolean): GameApi {
 
   const act = useCallback(
     (action: PlayerAction) => {
-      void send('game:action', action).catch(() => {});
+      return send('game:action', action);
     },
     [send],
   );
@@ -278,12 +279,10 @@ export function useGame(signedIn: boolean): GameApi {
   // Con sesión abierta y una sala guardada, volvemos solos a la mesa.
   useEffect(() => {
     if (!signedIn) return;
+    // El lobby necesita la conexión incluso si la sala guardada ya no existe.
+    const current = ensureSocket();
     const code = read(ROOM_KEY);
-    if (!code) {
-      // Igual conectamos: el lobby necesita el socket para crear salas.
-      ensureSocket();
-      return;
-    }
+    if (!code) return;
 
     let cancelled = false;
     (async () => {
@@ -291,7 +290,7 @@ export function useGame(signedIn: boolean): GameApi {
         const response = await fetch(`/api/rooms/${encodeURIComponent(code)}`);
         if (!response.ok) throw new Error('La mesa ya no existe');
         if (cancelled) return;
-        await emitAck<JoinResult>(ensureSocket(), 'room:join', { code });
+        await emitAck<JoinResult>(current, 'room:join', { code });
         if (cancelled) return;
         enterRoom(code);
       } catch {
@@ -345,6 +344,7 @@ export function useGame(signedIn: boolean): GameApi {
     takeSeat: (seat: number) => send('seat:take', { seat }),
     leaveSeat: () => send('seat:leave'),
     rebuy: () => send('player:rebuy'),
+    withdraw: () => send('player:withdraw'),
     updateSettings: (patch: Partial<TableSettings>) => send('settings:update', patch),
     sendChat: (text: string) => send('chat:send', { text }),
     dismissToast,

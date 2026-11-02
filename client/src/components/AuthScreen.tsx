@@ -30,7 +30,8 @@ export function AuthScreen({ auth, onNotify }: Props) {
 
   const usernameCheck = checkUsername(username);
   const canSubmit =
-    username.length > 0 && password.length >= 8 && (mode === 'login' || usernameCheck.ok);
+    username.trim().length > 0 &&
+    (mode === 'login' ? password.length > 0 : password.length >= 8 && usernameCheck.ok);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -142,7 +143,7 @@ export function AuthScreen({ auth, onNotify }: Props) {
         </button>
 
         <footer className="lobby__footer">
-          Fichas de juguete, orgullo real. No hay plata de verdad en ningún lado.
+          Poker entre amigos, con fichas virtuales y cuentas claras.
         </footer>
       </div>
     </div>

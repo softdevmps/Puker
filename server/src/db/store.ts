@@ -11,6 +11,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { createHash } from 'node:crypto';
+import type { TournamentRecord } from '../tournament.js';
 
 export interface UserRow {
   id: number;
@@ -19,6 +21,8 @@ export interface UserRow {
   password_hash: string | null;
   google_sub: string | null;
   avatar_url: string | null;
+  bio: string;
+  transfer_alias: string | null;
   created_at: number;
   last_seen_at: number;
 }
@@ -58,6 +62,7 @@ function asRow<T>(value: unknown): T | null {
 
 /** Migraciones en orden. Nunca se edita una ya aplicada: se agrega otra. */
 const MIGRATIONS: { name: string; sql: string }[] = [
+  // Las migraciones aplicadas se mantienen intactas.
   {
     name: '001-inicial',
     sql: `
@@ -95,6 +100,35 @@ const MIGRATIONS: { name: string; sql: string }[] = [
       );
       CREATE INDEX idx_hands_user ON hand_results(user_id);
       CREATE INDEX idx_hands_played ON hand_results(played_at);
+    `,
+  },
+  {
+    name: '002-torneos',
+    sql: `
+      CREATE TABLE tournament_records (
+        id TEXT PRIMARY KEY,
+        room_code TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        record_json TEXT NOT NULL
+      );
+      CREATE TABLE tournament_members (
+        tournament_id TEXT NOT NULL REFERENCES tournament_records(id),
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        PRIMARY KEY(tournament_id, user_id)
+      );
+      CREATE INDEX idx_tournament_member_user ON tournament_members(user_id);
+    `,
+  },
+  {
+    name: '003-perfiles',
+    sql: `
+      ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT '';
+      ALTER TABLE users ADD COLUMN transfer_alias TEXT;
+      CREATE TABLE user_avatars (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        revision TEXT NOT NULL,
+        image BLOB NOT NULL
+      );
     `,
   },
 ];
@@ -208,6 +242,35 @@ export class Store {
     this.db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(displayName, userId);
   }
 
+  updateProfile(userId: number, profile: { displayName: string; bio: string; transferAlias: string | null; avatar?: Buffer | null }): UserRow {
+    this.db.exec('BEGIN');
+    try {
+      this.db.prepare('UPDATE users SET display_name = ?, bio = ?, transfer_alias = ? WHERE id = ?')
+        .run(profile.displayName, profile.bio, profile.transferAlias, userId);
+      if (profile.avatar !== undefined) {
+        let avatarUrl: string | null = null;
+        if (profile.avatar === null) this.db.prepare('DELETE FROM user_avatars WHERE user_id = ?').run(userId);
+        else {
+          const revision = createHash('sha256').update(profile.avatar).digest('hex').slice(0, 24);
+          this.db.prepare(`INSERT INTO user_avatars (user_id, revision, image) VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET revision = excluded.revision, image = excluded.image`)
+            .run(userId, revision, profile.avatar);
+          avatarUrl = `/api/auth/avatar/${userId}/${revision}`;
+        }
+        this.db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(avatarUrl, userId);
+      }
+      const user = this.findUserById(userId);
+      if (!user) throw new Error('No existe la cuenta');
+      this.db.exec('COMMIT');
+      return user;
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+
+  avatarFor(userId: number, revision: string): Uint8Array | null {
+    const row = this.db.prepare('SELECT image FROM user_avatars WHERE user_id = ? AND revision = ?').get(userId, revision) as { image: Uint8Array } | undefined;
+    return row?.image ?? null;
+  }
+
   touchUser(userId: number): void {
     this.db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(Date.now(), userId);
   }
@@ -248,6 +311,28 @@ export class Store {
   }
 
   // ------------------------------------------------------------ resultados
+
+  saveTournament(record: TournamentRecord): void {
+    this.db.exec('BEGIN');
+    try {
+      this.db.prepare(`INSERT INTO tournament_records (id, room_code, started_at, record_json)
+        VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET record_json = excluded.record_json`)
+        .run(record.id, record.roomCode, record.startedAt, JSON.stringify(record));
+      const addMember = this.db.prepare('INSERT OR IGNORE INTO tournament_members (tournament_id, user_id) VALUES (?, ?)');
+      for (const userId of record.userIds) addMember.run(record.id, userId);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  tournamentsFor(userId: number): TournamentRecord[] {
+    const rows = this.db.prepare(`SELECT r.record_json FROM tournament_records r
+      JOIN tournament_members m ON m.tournament_id = r.id
+      WHERE m.user_id = ? ORDER BY r.started_at DESC LIMIT 50`).all(userId) as { record_json: string }[];
+    return rows.map((row) => JSON.parse(row.record_json) as TournamentRecord);
+  }
 
   /** Guarda todas las filas de una mano en una sola transacción. */
   recordHand(rows: HandRow[]): void {

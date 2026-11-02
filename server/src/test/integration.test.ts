@@ -263,7 +263,7 @@ test('crear una sala, entrar con el código y jugar una mano completa', async ()
     const anfitrion = await newPlayer(ctx, 'marcos');
 
     const creada = await anfitrion.request<JoinResult>('room:create', {
-      settings: { smallBlind: 10, bigBlind: 20, startingStack: 1000, maxSeats: 2, turnTimeSec: 120 },
+      settings: { tournament: false, chipUnit: 1, smallBlind: 10, bigBlind: 20, startingStack: 1000, maxSeats: 2, turnTimeSec: 120 },
     });
     assert.match(creada.code, /^[A-Z2-9]{4}$/);
 
@@ -321,6 +321,87 @@ test('crear una sala, entrar con el código y jugar una mano completa', async ()
   });
 });
 
+test('el socket rechaza una segunda recarga incluso después de salir y reconectar', async () => {
+  await withServer(async (ctx) => {
+    const player = await newPlayer(ctx, 'recarga');
+    const room = await player.request<JoinResult>('room:create', { settings: { tournament: false } });
+    const table = ctx.server.manager.get(room.code)!.table;
+    table.seatOf(room.playerId)!.chips = 0;
+    await player.request('player:rebuy');
+    const state = await player.waitFor((s) => s.players.some((p) => p.rebuyUsed));
+    assert.equal(state.canRebuy, false);
+    assert.equal(table.seatOf(room.playerId)!.chips, 29_000);
+    table.seatOf(room.playerId)!.chips = 0;
+    await player.request('seat:leave');
+    player.close();
+    await player.connect();
+    await player.request('room:join', { code: room.code });
+    await assert.rejects(player.request('player:rebuy'), /única recarga/);
+    assert.equal(table.seatOf(room.playerId)!.chips, 0);
+  });
+});
+
+test('torneo: el pozo incluye recompras, espera decisiones, persiste el reparto y protege el historial', async () => {
+  await withServer(async (ctx) => {
+    const a = await newPlayer(ctx, 'torneoa');
+    const b = await newPlayer(ctx, 'torneob');
+    const c = await newPlayer(ctx, 'torneoc');
+    const spectator = await newPlayer(ctx, 'mirando');
+    const room = await a.request<JoinResult>('room:create');
+    const rb = await b.request<JoinResult>('room:join', { code: room.code });
+    const rc = await c.request<JoinResult>('room:join', { code: room.code });
+    const table = ctx.server.manager.get(room.code)!.table;
+    table.seatOf(room.playerId)!.chips = 100;
+    table.seatOf(rb.playerId)!.chips = 29_000;
+    table.seatOf(rc.playerId)!.chips = 57_900;
+    await a.request('game:start');
+    const lateJoin = await spectator.request<JoinResult>('room:join', { code: room.code });
+    assert.equal(lateJoin.seated, false);
+    await a.request('game:action', { type: 'allin' });
+    await b.request('game:action', { type: 'call' });
+    await c.request('game:action', { type: 'check' });
+    table.board = ['2h', '3d', '7c', '8h', 'Ts']; table.phase = 'river';
+    table.seatOf(room.playerId)!.holeCards = ['Qc', 'Qd'];
+    table.seatOf(rb.playerId)!.holeCards = ['Ac', 'Ad'];
+    table.seatOf(rc.playerId)!.holeCards = ['Kc', 'Kd'];
+    await b.request('game:action', { type: 'check' });
+    await c.request('game:action', { type: 'check' });
+    await a.waitFor((s) => s.tournament?.status === 'awaiting-rebuy');
+    a.close(); await a.connect(); await a.request('room:join', { code: room.code });
+    await a.request('player:rebuy');
+    await a.waitFor((s) => s.tournament?.potCents === 1_900_000);
+    await assert.rejects(a.request('player:rebuy'), /única recarga/);
+    await a.request('player:withdraw');
+    const finished = await b.waitFor((s) => s.tournament?.status === 'finished');
+    const result = finished.tournament!.result!;
+    assert.equal(result.potCents, 1_900_000);
+    assert.equal(result.players.find((p) => p.id === room.playerId)!.netCents, -900_000);
+    assert.equal(result.players.reduce((sum, p) => sum + p.payoutCents, 0), 1_900_000);
+    const history = await fetch(`http://127.0.0.1:${ctx.port}/api/tournaments`, { headers: { cookie: a.cookie } });
+    const saved = await history.json() as { tournaments: { result: unknown }[] };
+    assert.deepEqual(saved.tournaments[0]!.result, result);
+    // El alias puede cargarse después de jugar: estado e historial usan el actual.
+    const profile = await fetch(`http://127.0.0.1:${ctx.port}/api/auth/profile`, {
+      method: 'PATCH', headers: { cookie: b.cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ displayName: 'Nombre nuevo', transferAlias: 'ganador.actual' }),
+    });
+    assert.equal(profile.status, 200);
+    const live = await a.waitFor((s) => s.tournament?.result?.players.some((p) => p.id === rb.playerId && p.transferAlias === 'ganador.actual') === true);
+    assert.equal(live.players.find((p) => p.id === rb.playerId)!.name, 'Nombre nuevo');
+    const refreshed = await fetch(`http://127.0.0.1:${ctx.port}/api/tournaments`, { headers: { cookie: a.cookie } });
+    const current = await refreshed.json() as { tournaments: { result: { players: { id: string; transferAlias: string; payoutCents: number }[] } }[] };
+    const winner = current.tournaments[0]!.result.players.find((p) => p.id === rb.playerId)!;
+    assert.equal(winner.transferAlias, 'ganador.actual');
+    assert.equal(winner.payoutCents, result.players.find((p) => p.id === rb.playerId)!.payoutCents);
+    const socket = [...ctx.server.io.sockets.sockets.values()].find((s) => s.data.player?.playerId === rb.playerId)!;
+    assert.equal(socket.data.player!.name, 'Nombre nuevo');
+    const others = await fetch(`http://127.0.0.1:${ctx.port}/api/tournaments`, { headers: { cookie: spectator.cookie } });
+    assert.deepEqual((await others.json() as { tournaments: unknown[] }).tournaments, []);
+    const anonymous = await fetch(`http://127.0.0.1:${ctx.port}/api/tournaments`);
+    assert.equal(anonymous.status, 401);
+  });
+});
+
 test('reconectar con la misma cuenta recupera el asiento y las fichas', async () => {
   await withServer(async (ctx) => {
     const anfitrion = await newPlayer(ctx, 'marcos');
@@ -359,7 +440,7 @@ test('el servidor rechaza acciones ilegales y fuera de turno', async () => {
   await withServer(async (ctx) => {
     const a = await newPlayer(ctx, 'marcos');
     const sala = await a.request<JoinResult>('room:create', {
-      settings: { maxSeats: 2, smallBlind: 10, bigBlind: 20, startingStack: 1000, turnTimeSec: 120 },
+      settings: { tournament: false, chipUnit: 1, maxSeats: 2, smallBlind: 10, bigBlind: 20, startingStack: 1000, turnTimeSec: 120 },
     });
 
     const b = await newPlayer(ctx, 'amigo');
@@ -416,7 +497,7 @@ test('el chat llega a todos los de la sala', async () => {
 test('la mesa llena deja entrar como espectador y después sentarse', async () => {
   await withServer(async (ctx) => {
     const a = await newPlayer(ctx, 'marcos');
-    const sala = await a.request<JoinResult>('room:create', { settings: { maxSeats: 2 } });
+    const sala = await a.request<JoinResult>('room:create', { settings: { tournament: false, maxSeats: 2 } });
 
     const b = await newPlayer(ctx, 'amigo');
     await b.request('room:join', { code: sala.code });
@@ -442,7 +523,7 @@ test('el ranking acumula el resultado de las manos jugadas', async () => {
   await withServer(async (ctx) => {
     const a = await newPlayer(ctx, 'marcos');
     const sala = await a.request<JoinResult>('room:create', {
-      settings: { maxSeats: 2, smallBlind: 10, bigBlind: 20, startingStack: 1000, turnTimeSec: 120 },
+      settings: { tournament: false, chipUnit: 1, maxSeats: 2, smallBlind: 10, bigBlind: 20, startingStack: 1000, turnTimeSec: 120 },
     });
     const b = await newPlayer(ctx, 'amigo');
     await b.request('room:join', { code: sala.code });
@@ -483,8 +564,8 @@ test('el ranking acumula el resultado de las manos jugadas', async () => {
     );
     assert.equal(
       ranking.reduce((sum, row) => sum + row.wins, 0),
-      1,
-      'hubo exactamente un ganador',
+      new Set(a.state!.lastResult!.payouts.filter((p) => p.amount > 0).map((p) => p.seat)).size,
+      'el ranking cuenta a cada ganador, incluidos los empates',
     );
     assert.ok(ranking[0]!.net >= ranking[1]!.net, 'viene ordenado por fichas netas');
   });

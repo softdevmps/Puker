@@ -1,138 +1,109 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 
-import { formatChips, type GameState, type PlayerAction } from '@puker/shared';
+import { CHIP_DENOMINATIONS, chipBreakdown, formatStack, type GameState, type PlayerAction } from '@puker/shared';
 
 interface Props {
   state: GameState;
-  onAct(action: PlayerAction): void;
+  onAct(action: PlayerAction): Promise<void>;
 }
 
 export function ActionBar({ state, onAct }: Props) {
-  const legal = state.legal;
-  const isMyTurn = legal !== null;
-  const [raiseTo, setRaiseTo] = useState<number | null>(null);
-  const lastTurnKey = useRef('');
+  if (!state.legal) return <WaitingBar state={state} />;
+  const turnKey = `${state.roomCode}:${state.handNumber}:${state.phase}:${state.turnSeat}:${state.turnEndsAt}`;
+  return <ChipBetting key={turnKey} state={state} onAct={onAct} />;
+}
 
-  // Cada vez que te vuelve a tocar, el panel de subida arranca cerrado.
-  const turnKey = `${state.handNumber}:${state.phase}:${state.currentBet}:${isMyTurn}`;
-  useEffect(() => {
-    if (lastTurnKey.current !== turnKey) {
-      lastTurnKey.current = turnKey;
-      setRaiseTo(null);
+function ChipBetting({ state, onAct }: Props) {
+  const [selection, setSelection] = useState<number[]>([]);
+  const [pending, setPending] = useState(false);
+  const legal = state.legal!;
+  const you = state.players.find((player) => player.seat === state.youSeat)!;
+  const selected = selection.reduce((sum, value) => sum + value, 0);
+  const target = you.bet + selected;
+  const canRaise = legal.canBet || legal.canRaise;
+  const limit = canRaise ? you.chips : legal.callAmount;
+  const isCall = legal.canCall && selected === legal.callAmount;
+  const validRaise = canRaise && target >= legal.minRaiseTo && target <= legal.maxRaiseTo;
+  const canConfirm = selected > 0 && (isCall || validRaise);
+  const allIn = selected === you.chips;
+  const selectAmount = (amount: number) => setSelection(
+    chipBreakdown(amount).flatMap((chip) => Array<number>(chip.count).fill(chip.value)),
+  );
+
+  const play = async (action: PlayerAction) => {
+    if (pending) return;
+    setPending(true);
+    try {
+      await onAct(action);
+      setSelection([]);
+    } catch {
+      // useGame muestra el error; conservamos la selección para poder corregirla.
+    } finally {
+      setPending(false);
     }
-  }, [turnKey]);
-
-  if (!isMyTurn || !legal) {
-    return <WaitingBar state={state} />;
-  }
-
-  const canAggress = legal.canBet || legal.canRaise;
-  const amount = clamp(raiseTo ?? legal.minRaiseTo, legal.minRaiseTo, legal.maxRaiseTo);
-  const step = pickStep(state.settings.bigBlind, legal.minRaiseTo, legal.maxRaiseTo);
-
-  // Atajos basados en el bote. Se descartan los que no cambian nada.
-  const shortcuts = buildShortcuts(state, legal.minRaiseTo, legal.maxRaiseTo);
-
-  const confirmRaise = () => {
-    if (amount >= legal.maxRaiseTo) onAct({ type: 'allin' });
-    else onAct({ type: legal.canBet ? 'bet' : 'raise', amount });
-    setRaiseTo(null);
   };
 
+  const confirm = () => {
+    if (!canConfirm) return;
+    void play(isCall ? { type: 'call' } : allIn ? { type: 'allin' } : {
+      type: legal.canBet ? 'bet' : 'raise', amount: target,
+    });
+  };
+
+  let hint = canRaise
+    ? `Mínimo para ${legal.canBet ? 'apostar' : 'subir'}: $${formatStack(legal.minRaiseTo)} en total`
+    : 'En este turno solo podés igualar o retirarte';
+  if (isCall) hint = `Vas a igualar con $${formatStack(selected)}${allIn ? ' (all-in)' : ''}`;
+  else if (validRaise && selected > 0) hint = `Tu apuesta total será $${formatStack(target)}${allIn ? ' (all-in)' : ''}`;
+  else if (selected > 0 && target < state.currentBet) hint = `Faltan $${formatStack(legal.callAmount - selected)} para igualar`;
+
   return (
-    <div className="actions">
-      {raiseTo !== null && canAggress ? (
-        <div className="raise">
-          <div className="raise__top">
-            <button type="button" className="raise__close" onClick={() => setRaiseTo(null)}>
-              Volver
-            </button>
-            <div className="raise__amount">
-              <span className="raise__amount-label">{legal.canBet ? 'Apostar' : 'Subir a'}</span>
-              <strong>{amount.toLocaleString('es-AR')}</strong>
-            </div>
-          </div>
+    <div className="actions actions--chips" aria-label="Tus acciones de juego">
+      <div className="chip-betting">
+        <div className="chip-betting__heading">
+          <div><span className="chip-betting__eyebrow">Tu turno · elegí tus fichas</span><strong>Al centro: ${formatStack(selected)}</strong></div>
+          <span className="chip-betting__balance">Disponibles<br /><strong>${formatStack(you.chips - selected)}</strong></span>
+        </div>
 
-          <div className="raise__shortcuts">
-            {shortcuts.map((shortcut) => (
+        <div className="chip-betting__tray" aria-label="Fichas para armar la apuesta">
+          {CHIP_DENOMINATIONS.map((chip) => {
+            const count = selection.filter((value) => value === chip.value).length;
+            return (
               <button
-                key={shortcut.label}
+                key={chip.value}
                 type="button"
-                className={`chip-btn${amount === shortcut.value ? ' chip-btn--on' : ''}`}
-                onClick={() => setRaiseTo(shortcut.value)}
+                className={`chip-betting__pick${count ? ' chip-betting__pick--selected' : ''}`}
+                disabled={pending || selected + chip.value > limit}
+                aria-label={`Agregar ficha ${chip.label.toLowerCase()} de $${chip.value}`}
+                onClick={() => setSelection((prev) => [...prev, chip.value])}
               >
-                {shortcut.label}
+                <span className={`poker-chip poker-chip--${chip.color}`} aria-hidden="true">{formatStack(chip.value)}</span>
+                <span className="chip-betting__count">{count ? `×${count}` : `+${formatStack(chip.value)}`}</span>
               </button>
-            ))}
-          </div>
-
-          <div className="raise__slider">
-            <button
-              type="button"
-              className="raise__nudge"
-              aria-label="Bajar"
-              onClick={() => setRaiseTo(clamp(amount - step, legal.minRaiseTo, legal.maxRaiseTo))}
-            >
-              −
-            </button>
-            <input
-              type="range"
-              min={legal.minRaiseTo}
-              max={legal.maxRaiseTo}
-              step={step}
-              value={amount}
-              onChange={(event) => setRaiseTo(Number(event.target.value))}
-              aria-label="Monto a apostar"
-            />
-            <button
-              type="button"
-              className="raise__nudge"
-              aria-label="Subir"
-              onClick={() => setRaiseTo(clamp(amount + step, legal.minRaiseTo, legal.maxRaiseTo))}
-            >
-              +
-            </button>
-          </div>
-
-          <button type="button" className="btn btn--raise btn--wide" onClick={confirmRaise}>
-            {amount >= legal.maxRaiseTo
-              ? `All-in ${formatChips(amount)}`
-              : `${legal.canBet ? 'Apostar' : 'Subir a'} ${formatChips(amount)}`}
-          </button>
+            );
+          })}
         </div>
-      ) : (
+
+        <div className="chip-betting__tools">
+          <button type="button" disabled={pending || !selection.length} onClick={() => setSelection((prev) => prev.slice(0, -1))}>Deshacer</button>
+          <button type="button" disabled={pending || !selection.length} onClick={() => setSelection([])}>Limpiar</button>
+          {canRaise ? <button type="button" disabled={pending} onClick={() => selectAmount(legal.minRaiseTo - you.bet)}>Mínimo</button> : null}
+          {canRaise || legal.callAmount === you.chips ? <button type="button" disabled={pending} onClick={() => selectAmount(you.chips)}>Todo</button> : null}
+          <span>Cambio automático</span>
+        </div>
+        <p className="chip-betting__hint" aria-live="polite">{hint}</p>
+
         <div className="actions__row">
-          <button type="button" className="btn btn--fold" onClick={() => onAct({ type: 'fold' })}>
-            Retirarse
+          <button type="button" className="btn btn--fold" disabled={pending} onClick={() => void play({ type: 'fold' })}>Retirarse</button>
+          <button type="button" className={`btn ${legal.canCheck ? 'btn--check' : 'btn--call'}`} disabled={pending} onClick={() => void play({ type: legal.canCheck ? 'check' : 'call' })}>
+            {legal.canCheck ? 'Pasar' : <>Igualar<small>${formatStack(legal.callAmount)}</small></>}
           </button>
-
-          {legal.canCheck ? (
-            <button type="button" className="btn btn--check" onClick={() => onAct({ type: 'check' })}>
-              Pasar
-            </button>
-          ) : (
-            <button type="button" className="btn btn--call" onClick={() => onAct({ type: 'call' })}>
-              <span>Igualar</span>
-              <small>{formatChips(legal.callAmount)}</small>
-            </button>
-          )}
-
-          {canAggress ? (
-            <button
-              type="button"
-              className="btn btn--raise"
-              onClick={() => setRaiseTo(legal.minRaiseTo)}
-            >
-              <span>{legal.canBet ? 'Apostar' : 'Subir'}</span>
-              {legal.raiseIsAllIn ? <small>all-in</small> : <small>desde {formatChips(legal.minRaiseTo)}</small>}
-            </button>
-          ) : (
-            <button type="button" className="btn btn--raise" onClick={() => onAct({ type: 'allin' })}>
-              All-in
-            </button>
-          )}
+          <button type="button" className="btn btn--raise" disabled={pending || !canConfirm} onClick={confirm}>
+            {pending ? 'Enviando…' : allIn && canConfirm ? 'Confirmar all-in' : 'Confirmar'}
+            <small>${formatStack(selected)}</small>
+          </button>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -141,8 +112,11 @@ function WaitingBar({ state }: { state: GameState }) {
   const you = state.players.find((player) => player.seat === state.youSeat);
 
   let message = 'Esperando a los demás...';
-  if (state.youSeat === null) message = 'Estás mirando la partida';
+  if (state.tournament?.status === 'finished') message = 'Partida terminada. El reparto está disponible arriba.';
+  else if (state.tournament?.status === 'awaiting-rebuy') message = 'Partida en espera: falta decidir una recompra.';
+  else if (state.youSeat === null) message = 'Estás mirando la partida';
   else if (!state.running) message = state.pausedReason ?? 'Partida en pausa';
+  else if (you?.chips === 0 && you.rebuyUsed) message = 'Sin fichas. Ya usaste tu única recarga de esta partida.';
   else if (you?.status === 'sitting-out') message = you.chips <= 0 ? 'Te quedaste sin fichas' : 'Estás de descanso';
   else if (you?.status === 'folded') message = 'Te retiraste de esta mano';
   else if (you?.status === 'waiting') message = 'Entrás en la próxima mano';
@@ -156,44 +130,4 @@ function WaitingBar({ state }: { state: GameState }) {
       <span>{message}</span>
     </div>
   );
-}
-
-interface Shortcut {
-  label: string;
-  value: number;
-}
-
-function buildShortcuts(state: GameState, min: number, max: number): Shortcut[] {
-  const pot = Math.max(state.totalPot, state.settings.bigBlind);
-  const base = state.currentBet;
-
-  const candidates: Shortcut[] = [
-    { label: '½ bote', value: base + Math.round(pot / 2) },
-    { label: '¾ bote', value: base + Math.round(pot * 0.75) },
-    { label: 'Bote', value: base + pot },
-  ];
-  if (base > 0) candidates.push({ label: 'x2', value: base * 2 });
-  candidates.push({ label: 'Todo', value: max });
-
-  const seen = new Set<number>();
-  const out: Shortcut[] = [];
-  for (const candidate of candidates) {
-    const value = clamp(candidate.value, min, max);
-    if (seen.has(value)) continue;
-    seen.add(value);
-    out.push({ label: candidate.label, value });
-  }
-  return out;
-}
-
-/** Paso del slider: múltiplos de la ciega grande, salvo que el rango sea chico. */
-function pickStep(bigBlind: number, min: number, max: number): number {
-  const range = max - min;
-  if (range <= 0) return 1;
-  if (range < bigBlind * 4) return Math.max(1, Math.round(range / 20));
-  return bigBlind;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, Math.round(value)));
 }

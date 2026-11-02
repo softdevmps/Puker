@@ -17,6 +17,7 @@ import { config } from '../config.js';
 import type { Store, UserRow } from '../db/store.js';
 import { buildAuthUrl, exchangeCodeForProfile } from './google.js';
 import { checkPasswordStrength, hashPassword, verifyPassword } from './passwords.js';
+import { decodeAvatar } from './avatar.js';
 import {
   OAUTH_STATE_COOKIE,
   clearOAuthState,
@@ -37,6 +38,9 @@ export function toAuthUser(user: UserRow): AuthUser {
     username: user.username,
     displayName: user.display_name,
     avatarUrl: user.avatar_url,
+    bio: user.bio,
+    transferAlias: user.transfer_alias,
+    createdAt: user.created_at,
     hasPassword: Boolean(user.password_hash),
     hasGoogle: Boolean(user.google_sub),
   };
@@ -91,7 +95,7 @@ class AttemptLimiter {
   }
 }
 
-export function createAuthRouter(store: Store): Router {
+export function createAuthRouter(store: Store, onProfileChanged: (user: UserRow) => void = () => {}): Router {
   const router = Router();
   const loginLimiter = new AttemptLimiter(8, 10 * 60 * 1000);
   /**
@@ -207,14 +211,45 @@ export function createAuthRouter(store: Store): Router {
       res.status(401).json({ error: 'No estás conectado' });
       return;
     }
-    const body = req.body as { displayName?: string };
-    const displayName = sanitizeName(String(body.displayName ?? ''));
+    const body = req.body as Record<string, unknown> | null;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      res.status(400).json({ error: 'Perfil inválido' }); return;
+    }
+    for (const field of ['displayName', 'bio', 'transferAlias']) {
+      if (body[field] !== undefined && typeof body[field] !== 'string') {
+        res.status(400).json({ error: 'Los campos del perfil deben ser texto' }); return;
+      }
+    }
+    const displayName = body.displayName === undefined ? user.display_name : sanitizeName(body.displayName as string);
     if (displayName.length < 2) {
       res.status(400).json({ error: 'El nombre necesita al menos 2 caracteres' });
       return;
     }
-    store.updateDisplayName(user.id, displayName);
-    res.json({ user: toAuthUser({ ...user, display_name: displayName }) });
+    const bio = body.bio === undefined ? user.bio : (body.bio as string).trim();
+    const transferAlias = body.transferAlias === undefined ? user.transfer_alias : (body.transferAlias as string).trim() || null;
+    if (bio.length > 160) { res.status(400).json({ error: 'La descripción admite hasta 160 caracteres' }); return; }
+    if (transferAlias && !/^[a-zA-Z0-9.-]{1,100}$/.test(transferAlias)) {
+      res.status(400).json({ error: 'El alias admite letras, números, puntos y guiones, sin espacios (hasta 100 caracteres)' }); return;
+    }
+    let avatar: Buffer | null | undefined;
+    try {
+      if (body.avatarDataUrl !== undefined) avatar = body.avatarDataUrl === null ? null : decodeAvatar(body.avatarDataUrl);
+    } catch (error) { res.status(400).json({ error: (error as Error).message }); return; }
+    const updated = store.updateProfile(user.id, { displayName, bio, transferAlias, avatar });
+    onProfileChanged(updated);
+    res.json({ user: toAuthUser(updated) });
+  });
+
+  router.get('/avatar/:id/:revision', (req, res) => {
+    if (!userFromRequest(req, store)) { res.sendStatus(401); return; }
+    const id = Number(req.params.id);
+    const revision = req.params.revision;
+    if (!Number.isSafeInteger(id) || id < 1 || !/^[a-f0-9]{24}$/.test(revision)) { res.sendStatus(404); return; }
+    const image = store.avatarFor(id, revision);
+    if (!image) { res.sendStatus(404); return; }
+    res.set('Cache-Control', 'private, max-age=86400');
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.type('image/jpeg').send(Buffer.from(image));
   });
 
   /** Permite a una cuenta de Google agregarse contraseña, y cambiarla. */

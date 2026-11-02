@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import type { AuthInfo, AuthUser } from '@puker/shared';
+import type { AuthInfo, AuthUser, ProfileUpdate } from '@puker/shared';
 
 /**
  * Estado de la cuenta.
@@ -15,7 +15,7 @@ export interface AuthApi {
   login(username: string, password: string): Promise<void>;
   register(username: string, displayName: string, password: string): Promise<void>;
   logout(): Promise<void>;
-  updateDisplayName(displayName: string): Promise<void>;
+  updateProfile(profile: ProfileUpdate): Promise<void>;
   refresh(): Promise<void>;
 }
 
@@ -89,13 +89,13 @@ export function useAuth(): AuthApi {
     setUser(null);
   }, []);
 
-  const updateDisplayName = useCallback(async (displayName: string) => {
+  const updateProfile = useCallback(async (profile: ProfileUpdate) => {
     const result = await api<{ user: AuthUser }>('/api/auth/profile', {
       method: 'PATCH',
-      body: JSON.stringify({ displayName }),
+      body: JSON.stringify(profile),
     });
     setUser(result.user);
   }, []);
 
-  return { loading, user, googleEnabled, login, register, logout, updateDisplayName, refresh };
+  return { loading, user, googleEnabled, login, register, logout, updateProfile, refresh };
 }
