@@ -50,9 +50,39 @@ export function TableView({
   const bySeat = new Map(state.players.map((player) => [player.seat, player]));
   const isSpectator = state.youSeat === null;
   const seatsFree = state.players.length < total;
+  const hideEmptySeats = state.phase !== 'waiting' || state.tournament !== null;
+  const opponents = Array.from({ length: total }, (_, seat) => seat)
+    .filter((seat) => seat !== state.youSeat)
+    .sort((a, b) => displayIndexOf(b, state.youSeat, total) - displayIndexOf(a, state.youSeat, total));
+  const mobileCount = hideEmptySeats ? opponents.filter((seat) => bySeat.has(seat)).length : opponents.length;
+
+  const renderSeat = (seat: number) => {
+    const player = bySeat.get(seat);
+    const isHero = seat === state.youSeat;
+    return <div
+      className={`seat-slot${isHero ? ' seat-slot--hero' : ''}${!player ? ' seat-slot--empty' : ''}`}
+      key={`seat-${seat}`}
+      style={seatPosition(displayIndexOf(seat, state.youSeat, total), total)}
+    >
+      {player ? <Seat
+        player={player}
+        isHero={isHero}
+        isHost={player.id === state.hostId}
+        timeFraction={player.isTurn ? countdown.fraction : 0}
+        timeSeconds={player.isTurn ? countdown.seconds : 0}
+        bestCards={bestBySeat.get(seat) ?? []}
+        inVoice={voiceParticipants.has(player.id)}
+        speaking={voiceSpeaking.has(player.id)}
+      /> : <EmptySeat seat={seat} canSit={isSpectator && seatsFree} onSit={onSit} />}
+      {player && player.bet > 0 ? <div className="seat-slot__bet" aria-label={`Apuesta de ${player.name}`}>
+        <span>Apostó</span> <BetAmount amount={player.bet} />
+      </div> : null}
+    </div>;
+  };
 
   return (
-    <div className="table">
+    <div className={`table${hideEmptySeats ? ' table--playing' : ''}`}>
+      <div className="table__arena">
       <div className="felt">
         <div className="felt__inner" />
       </div>
@@ -98,30 +128,9 @@ export function TableView({
         ) : null}
       </div>
 
-      {Array.from({ length: total }, (_, seat) => {
-        const displayIndex = displayIndexOf(seat, state.youSeat, total);
-        const position = seatPosition(displayIndex, total);
-        const player = bySeat.get(seat);
-
-        return (
-          <div className={`seat-slot${seat === state.youSeat ? ' seat-slot--hero' : ''}`} key={`seat-${seat}`} style={position}>
-            {player ? (
-              <Seat
-                player={player}
-                isHero={player.seat === state.youSeat}
-                isHost={player.id === state.hostId}
-                timeFraction={player.isTurn ? countdown.fraction : 0}
-                timeSeconds={player.isTurn ? countdown.seconds : 0}
-                bestCards={bestBySeat.get(seat) ?? []}
-                inVoice={voiceParticipants.has(player.id)}
-                speaking={voiceSpeaking.has(player.id)}
-              />
-            ) : (
-              <EmptySeat seat={seat} canSit={isSpectator && seatsFree} onSit={onSit} />
-            )}
-          </div>
-        );
-      })}
+      <div className={`table__opponents table__opponents--${mobileCount <= 4 ? 2 : 3}`}>
+        {opponents.map(renderSeat)}
+      </div>
 
       {state.players
         .filter((player) => player.bet > 0)
@@ -129,15 +138,23 @@ export function TableView({
           const displayIndex = displayIndexOf(player.seat, state.youSeat, total);
           return (
             <div className={`bet-chip${player.seat === state.youSeat ? ' bet-chip--hero' : ''}`} key={`bet-${player.seat}`} style={betPosition(displayIndex, total)}>
-              <span className="bet-chip__tokens" aria-hidden="true">
-                {chipBreakdown(player.bet).map((chip) => (
-                  <span key={chip.value} className={`poker-chip poker-chip--mini poker-chip--${chip.color}`} title={`${chip.count} × $${chip.value}`} />
-                ))}
-              </span>
-              {formatStack(player.bet)}
+              <BetAmount amount={player.bet} />
             </div>
           );
         })}
+      </div>
+      {state.youSeat !== null ? renderSeat(state.youSeat) : null}
     </div>
   );
+}
+
+function BetAmount({ amount }: { amount: number }) {
+  return <>
+    <span className="bet-chip__tokens" aria-hidden="true">
+      {chipBreakdown(amount).map((chip) => (
+        <span key={chip.value} className={`poker-chip poker-chip--mini poker-chip--${chip.color}`} title={`${chip.count} × $${chip.value}`} />
+      ))}
+    </span>
+    {formatStack(amount)}
+  </>;
 }
