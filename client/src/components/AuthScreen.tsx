@@ -15,6 +15,7 @@ export function AuthScreen({ auth, onNotify }: Props) {
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
   // El callback de Google vuelve con ?error=... si algo salió mal.
   useEffect(() => {
@@ -29,24 +30,35 @@ export function AuthScreen({ auth, onNotify }: Props) {
   }, [onNotify]);
 
   const usernameCheck = checkUsername(username);
-  const canSubmit =
-    username.trim().length > 0 &&
-    (mode === 'login' ? password.length > 0 : password.length >= 8 && usernameCheck.ok);
-
-  const submit = async (event: React.FormEvent) => {
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (busy) return;
+    // Lee también valores completados por el navegador sin eventos de React.
+    const fields = new FormData(event.currentTarget);
+    const submittedUsername = normalizeUsername(String(fields.get('username') ?? ''));
+    const submittedPassword = String(fields.get('password') ?? '');
+    const submittedName = String(fields.get('displayName') ?? '').trim();
+    setError('');
+    if (!submittedUsername) { setError('Completá tu usuario.'); return; }
+    if (!submittedPassword) { setError('Completá tu contraseña.'); return; }
+    if (mode === 'register') {
+      const check = checkUsername(submittedUsername);
+      if (!check.ok) { setError(check.error ?? 'Revisá el usuario.'); return; }
+      if (submittedPassword.length < 8) {
+        setError('La contraseña necesita al menos 8 caracteres.'); return;
+      }
+    }
     setBusy(true);
     try {
       if (mode === 'login') {
-        await auth.login(normalizeUsername(username), password);
+        await auth.login(submittedUsername, submittedPassword);
       } else {
-        await auth.register(normalizeUsername(username), displayName.trim() || username, password);
+        await auth.register(submittedUsername, submittedName || submittedUsername, submittedPassword);
         onNotify('success', '¡Cuenta creada! Ya podés armar una mesa.');
       }
       setPassword('');
-    } catch (error) {
-      onNotify('error', error instanceof Error ? error.message : 'No se pudo entrar');
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'No se pudo entrar');
     } finally {
       setBusy(false);
     }
@@ -78,11 +90,12 @@ export function AuthScreen({ auth, onNotify }: Props) {
           </>
         ) : null}
 
-        <form onSubmit={submit}>
+        <form onSubmit={submit} onChange={() => setError('')}>
           <label className="field">
             <span className="field__label">Usuario</span>
             <input
               className="field__input"
+              name="username"
               value={username}
               onChange={(event) => setUsername(event.target.value.toLowerCase())}
               placeholder="marcos"
@@ -92,8 +105,10 @@ export function AuthScreen({ auth, onNotify }: Props) {
               spellCheck={false}
               maxLength={16}
             />
-            {mode === 'register' && username.length > 0 && !usernameCheck.ok ? (
-              <span className="field__hint field__hint--bad">{usernameCheck.error}</span>
+            {mode === 'register' ? (
+              <span className={`field__hint${username.length > 0 && !usernameCheck.ok ? ' field__hint--bad' : ''}`}>
+                {username.length > 0 && !usernameCheck.ok ? usernameCheck.error : 'De 3 a 16 caracteres. Empezá con una letra; sin espacios ni tildes.'}
+              </span>
             ) : null}
           </label>
 
@@ -102,6 +117,7 @@ export function AuthScreen({ auth, onNotify }: Props) {
               <span className="field__label">Nombre en la mesa (opcional)</span>
               <input
                 className="field__input"
+                name="displayName"
                 value={displayName}
                 onChange={(event) => setDisplayName(event.target.value)}
                 placeholder="Cómo te ven los demás"
@@ -116,6 +132,7 @@ export function AuthScreen({ auth, onNotify }: Props) {
             <input
               className="field__input"
               type="password"
+              name="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               placeholder={mode === 'register' ? 'Mínimo 8 caracteres' : ''}
@@ -124,12 +141,13 @@ export function AuthScreen({ auth, onNotify }: Props) {
             />
             {mode === 'register' ? (
               <span className="field__hint">
-                No uses la misma que en otros sitios: esto es un proyecto casero entre amigos.
+                Mínimo 8 caracteres. Elegí una contraseña propia para Puker.
               </span>
             ) : null}
           </label>
 
-          <button type="submit" className="btn btn--primary btn--wide" disabled={!canSubmit || busy}>
+          {error ? <p className="field__hint field__hint--bad" role="alert">{error}</p> : null}
+          <button type="submit" className="btn btn--primary btn--wide" disabled={busy}>
             {busy ? 'Un segundo...' : mode === 'login' ? 'Entrar' : 'Crear cuenta'}
           </button>
         </form>
@@ -137,7 +155,8 @@ export function AuthScreen({ auth, onNotify }: Props) {
         <button
           type="button"
           className="linkish"
-          onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
+          disabled={busy}
+          onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); }}
         >
           {mode === 'login' ? '¿No tenés cuenta? Creá una' : '¿Ya tenés cuenta? Entrá'}
         </button>
