@@ -22,6 +22,14 @@ import type { Ack, IceConfig, VoicePeer } from '@puker/shared';
 const SPEAKING_DECAY_MS = 250;
 const SPEAKING_THRESHOLD = 0.018;
 
+/**
+ * Un micrófono vivo siempre trae algo de ruido de fondo. Por debajo de esto no
+ * hay ni eso: la pista está muerta aunque el navegador la muestre abierta.
+ */
+const DEAD_MIC_LEVEL = 0.0006;
+/** Cuánto silencio absoluto hace falta para avisar que no sale nada. */
+const DEAD_MIC_MS = 20_000;
+
 interface AckEmitter {
   emit(event: string, payload: unknown, ack: (res: Ack<unknown>) => void): void;
 }
@@ -68,6 +76,38 @@ export interface VoiceApi {
   start(): Promise<void>;
   stop(): void;
   toggleMute(): void;
+  /** Abre el micrófono, mide qué entra y lo cuenta en castellano. */
+  test(): Promise<{ ok: boolean; message: string }>;
+}
+
+/**
+ * Las razones por las que un navegador no deja usar el micrófono, en orden de
+ * probabilidad. Devuelve el problema encontrado, o cadena vacía si no hay.
+ */
+async function findBlocker(): Promise<string> {
+  if (!window.isSecureContext) {
+    return 'La página no está en HTTPS y el navegador no deja usar el micrófono. Entrá por la dirección con https://';
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return 'Este navegador no permite usar el micrófono. Probá con Chrome, Edge o Safari actualizados.';
+  }
+  try {
+    const permission = await navigator.permissions?.query({ name: 'microphone' as PermissionName });
+    if (permission?.state === 'denied') {
+      return 'El micrófono está bloqueado para este sitio. Tocá el candado al lado de la dirección, permitilo y recargá la página.';
+    }
+  } catch {
+    // Firefox y Safari no siempre saben responder por el micrófono.
+  }
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    if (devices.length > 0 && !devices.some((device) => device.kind === 'audioinput')) {
+      return 'No hay ningún micrófono conectado a este dispositivo.';
+    }
+  } catch {
+    // Sin permiso todavía, la lista puede venir vacía: no es un problema.
+  }
+  return '';
 }
 
 export function useVoice(options: {
@@ -93,6 +133,9 @@ export function useVoice(options: {
   const iceConfig = useRef<IceConfig | null>(null);
   const audioContext = useRef<AudioContext | null>(null);
   const activeRef = useRef(false);
+  /** Desde cuándo no entra ni ruido de fondo, y si ya se avisó. */
+  const quietSince = useRef(0);
+  const warnedQuiet = useRef(false);
   // `nameOf` cambia en cada render; se guarda en un ref para no reconstruir
   // los callbacks (y con ellos las conexiones) a cada rato.
   const nameRef = useRef(nameOf);
@@ -283,18 +326,21 @@ export function useVoice(options: {
   }, [socket, dropPeer]);
 
   const start = useCallback(async () => {
-    if (!socket || activeRef.current) return;
+    if (activeRef.current) return;
+    // Antes se volvía en silencio y el botón no hacía nada: imposible saber
+    // que lo que faltaba era la conexión con la mesa.
+    if (!socket) {
+      const message = 'Todavía no hay conexión con la mesa. Esperá a que vuelva y probá de nuevo.';
+      setError(message);
+      notify('error', message);
+      return;
+    }
     setConnecting(true);
     setError(null);
 
     try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error(
-          window.isSecureContext
-            ? 'Tu navegador no permite usar el micrófono'
-            : 'El micrófono necesita HTTPS. Abrilo con https:// o desde localhost.',
-        );
-      }
+      const blocker = await findBlocker();
+      if (blocker) throw new Error(blocker);
 
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
@@ -302,6 +348,20 @@ export function useVoice(options: {
       });
       localStream.current = stream;
       localAnalyser.current = makeAnalyser(stream);
+      quietSince.current = Date.now();
+      warnedQuiet.current = false;
+
+      // Si otra aplicación se queda con el micrófono, o cambia el dispositivo,
+      // la pista muere: seguís escuchando a todos y nadie te escucha a vos.
+      const [track] = stream.getAudioTracks();
+      if (track) {
+        track.onended = () => {
+          const message = 'Se cortó tu micrófono: otra aplicación se lo quedó o cambió el dispositivo. Tocá el micrófono para volver a abrirlo.';
+          setError(message);
+          notify('error', message);
+          stop();
+        };
+      }
 
       iceConfig.current = await request<IceConfig>(socket, 'voice:config');
 
@@ -365,6 +425,53 @@ export function useVoice(options: {
     };
   }, [socket, rejoin]);
 
+  /**
+   * Prueba a solas, sin molestar a la mesa: abre el micrófono y mide tres
+   * segundos. Distingue "no abre" de "abre pero no entra nada", que es lo que
+   * uno necesita saber para arreglarlo.
+   */
+  const test = useCallback(async (): Promise<{ ok: boolean; message: string }> => {
+    const blocker = await findBlocker();
+    if (blocker) return { ok: false, message: blocker };
+
+    let own: MediaStream | null = null;
+    try {
+      const stream = localStream.current ?? (own = await navigator.mediaDevices.getUserMedia({ audio: true }));
+      const analyser = makeAnalyser(stream);
+      if (!analyser) {
+        return { ok: true, message: 'El micrófono abre bien, pero este navegador no deja medir el nivel.' };
+      }
+
+      const buffer = new Float32Array(256);
+      let peak = 0;
+      const until = Date.now() + 3000;
+      while (Date.now() < until) {
+        analyser.getFloatTimeDomainData(buffer);
+        let sum = 0;
+        for (const sample of buffer) sum += sample * sample;
+        peak = Math.max(peak, Math.sqrt(sum / buffer.length));
+        await new Promise((resume) => setTimeout(resume, 60));
+      }
+
+      if (peak < 0.004) {
+        return {
+          ok: false,
+          message: 'El micrófono abre pero no entra nada de sonido. Fijate que el navegador no haya tomado otro micrófono y que no esté silenciado por el sistema.',
+        };
+      }
+      return {
+        ok: true,
+        message: peak > 0.05
+          ? 'El micrófono anda: se te escucha fuerte y claro.'
+          : 'El micrófono anda, pero se te escucha bajito. Probá hablar más cerca.',
+      };
+    } catch (caught) {
+      return { ok: false, message: describeMicError(caught) };
+    } finally {
+      for (const track of own?.getTracks() ?? []) track.stop();
+    }
+  }, [makeAnalyser]);
+
   const toggleMute = useCallback(() => {
     const next = !muted;
     for (const track of localStream.current?.getAudioTracks() ?? []) track.enabled = !next;
@@ -379,21 +486,40 @@ export function useVoice(options: {
     const buffer = new Float32Array(256);
     const lastHeard = new Map<string, number>();
 
-    const measure = (id: string, analyser: AnalyserNode | null, now: number, loud: Set<string>) => {
-      if (!analyser) return;
+    /** Volumen medio ahora mismo, o -1 si no se puede medir. */
+    const levelOf = (analyser: AnalyserNode | null): number => {
+      if (!analyser) return -1;
       analyser.getFloatTimeDomainData(buffer);
       let sum = 0;
       for (const sample of buffer) sum += sample * sample;
-      if (Math.sqrt(sum / buffer.length) > SPEAKING_THRESHOLD) lastHeard.set(id, now);
+      return Math.sqrt(sum / buffer.length);
+    };
+
+    const mark = (id: string, level: number, now: number, loud: Set<string>) => {
+      if (level < 0) return;
+      if (level > SPEAKING_THRESHOLD) lastHeard.set(id, now);
       if (now - (lastHeard.get(id) ?? 0) < SPEAKING_DECAY_MS) loud.add(id);
     };
 
     const timer = setInterval(() => {
       const now = Date.now();
       const loud = new Set<string>();
-      for (const [id, peer] of peers.current) measure(id, peer.analyser, now, loud);
+      for (const [id, peer] of peers.current) mark(id, levelOf(peer.analyser), now, loud);
+
+      const own = levelOf(localAnalyser.current);
       // Silenciado no debería figurar como hablando.
-      if (!muted) measure(youId, localAnalyser.current, now, loud);
+      if (!muted) mark(youId, own, now, loud);
+
+      // Silencio absoluto sostenido es el clásico "yo los escucho pero ellos a
+      // mí no": el micrófono figura abierto y no manda nada.
+      if (muted || own < 0 || own > DEAD_MIC_LEVEL) {
+        quietSince.current = now;
+      } else if (!warnedQuiet.current && now - quietSince.current > DEAD_MIC_MS) {
+        warnedQuiet.current = true;
+        const message = 'Hace rato que no entra nada por tu micrófono: nadie te está escuchando. Probalo desde el menú ⋯ → Probar mi micrófono.';
+        setError(message);
+        notify('error', message);
+      }
 
       setSpeaking((prev) => {
         if (prev.size === loud.size && [...loud].every((id) => prev.has(id))) return prev;
@@ -402,7 +528,7 @@ export function useVoice(options: {
     }, 120);
 
     return () => clearInterval(timer);
-  }, [active, muted, youId]);
+  }, [active, muted, youId, notify]);
 
   // --------------------------------------------------- señalización entrante
 
@@ -490,6 +616,7 @@ export function useVoice(options: {
     start,
     stop,
     toggleMute,
+    test,
   };
 }
 

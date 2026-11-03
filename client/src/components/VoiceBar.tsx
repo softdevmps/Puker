@@ -15,15 +15,17 @@ export function VoiceBar({ voice, nameOf }: Props) {
   const lost = [...voice.unreachable].map(nameOf);
 
   if (!voice.active) {
+    // Si el último intento falló, el botón lo recuerda: antes volvía como si
+    // nada y el motivo se iba con el cartelito.
     return (
       <button
         type="button"
-        className="voice-btn"
+        className={`voice-btn${voice.error ? ' voice-btn--error' : ''}`}
         onClick={() => void voice.start()}
         disabled={voice.connecting}
-        title="Hablar con la mesa"
+        title={voice.error ?? 'Hablar con la mesa'}
       >
-        {voice.connecting ? '...' : '🎤'}
+        {voice.connecting ? '...' : voice.error ? '🚫' : '🎤'}
       </button>
     );
   }

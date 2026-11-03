@@ -176,6 +176,18 @@ export function TopBar({
               {muted ? '🔔 Activar avisos' : '🔇 Silenciar avisos'}
             </button>
 
+            <button
+              type="button"
+              className="sheet__item"
+              onClick={() => {
+                setMenuOpen(false);
+                onNotify('info', 'Probando el micrófono: hablá unos segundos...');
+                void voice.test().then(({ ok, message }) => onNotify(ok ? 'success' : 'error', message));
+              }}
+            >
+              🎤 Probar mi micrófono
+            </button>
+
             {you && state.settings.allowRebuy ? (
               <div className="sheet__item sheet__item--note">
                 {you.rebuyUsed ? 'Ya usaste tu recarga' : 'Te queda una recarga'}

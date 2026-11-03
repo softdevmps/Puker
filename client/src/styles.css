@@ -1655,6 +1655,12 @@ input[type='range'] {
 }
 
 /* A cuántos del audio no se los está alcanzando. */
+/* El micrófono falló: queda marcado hasta el próximo intento. */
+.voice-btn--error {
+  border-color: #d65a4a;
+  color: #f0a79c;
+}
+
 .voice__lost {
   padding: 1px 6px;
   border-radius: 999px;
