@@ -711,9 +711,9 @@ test('la subida de ciegas queda anotada en el registro de la mesa', () => {
   assert.match(avisos[0]!.text, /20\/40/, 'y dice a cuánto pasaron');
 });
 
-test('frente a una apuesta grande, subir pide igualar su tamaño o ir all-in', () => {
-  // Reporte real: con una apuesta de 13.000 en la mesa no se podía subir a
-  // 20.000. Es la regla, no una falla: la subida mínima es a 26.000.
+test('con fichas de sobra, subir pide igualar el tamaño de la apuesta', () => {
+  // Con 13.000 apostados, subir a 20.000 sería subir apenas 7.000: a quien
+  // tiene fichas para la subida completa se le sigue exigiendo llegar a 26.000.
   const h = makeTable(2, { chipUnit: 50, smallBlind: 400, bigBlind: 800, startingStack: 200_000 });
   h.table.start(h.ids[0]!);
   while (h.table.getStateFor(h.ids[0]!).phase === 'preflop') {
@@ -734,11 +734,86 @@ test('frente a una apuesta grande, subir pide igualar su tamaño o ir all-in', (
   assert.equal(holgado.raiseIsAllIn, false);
   assert.throws(() => h.table.act(responde, { type: 'raise', amount: 20_000 }), /subida mínima/);
 
-  // Con menos de 26.000 encima, la única subida que queda es todo el stack.
+  // A quien no le alcanza se lo deja subir corto: lo cubre su propio test.
   h.table.seats[asiento]!.chips = 24_000;
   const corto = h.table.legalActions(asiento)!;
   assert.equal(corto.fullRaiseTo, 26_000, 'el total que se pediría no cambia');
-  assert.equal(corto.minRaiseTo, 24_000, 'pero el mínimo baja al all-in');
-  assert.equal(corto.maxRaiseTo, 24_000);
-  assert.equal(corto.raiseIsAllIn, true, 'y se avisa que solo queda ir con todo');
+  assert.ok(corto.minRaiseTo < corto.maxRaiseTo, 'pero el mínimo baja y queda margen');
+});
+
+test('sin fichas para la subida mínima se puede subir corto, sin ir con todo', () => {
+  // Pedido del uso real: frente a 13.000, con 24.000 encima, poder subir a
+  // 20.000 en vez de que la única salida sea el all-in.
+  const h = makeTable(3, { chipUnit: 50, smallBlind: 400, bigBlind: 800, startingStack: 200_000 });
+  h.table.start(h.ids[0]!);
+  while (h.table.getStateFor(h.ids[0]!).phase === 'preflop') {
+    const playerId = h.current()!;
+    const legal = h.table.legalActions(seatOf(h, playerId))!;
+    h.table.act(playerId, legal.canCheck ? { type: 'check' } : { type: 'call' });
+  }
+
+  const apostador = h.current()!;
+  h.table.act(apostador, { type: 'bet', amount: 13_000 });
+
+  const responde = h.current()!;
+  const asiento = seatOf(h, responde);
+  h.table.seats[asiento]!.chips = 24_000;
+
+  const legal = h.table.legalActions(asiento)!;
+  assert.equal(legal.fullRaiseTo, 26_000, 'la subida completa seguiría siendo a 26.000');
+  assert.equal(legal.minRaiseTo, 13_800, 'pero alcanza con una ciega grande más');
+  assert.equal(legal.raiseIsAllIn, false, 'y ya no obliga a ir con todo');
+
+  h.table.act(responde, { type: 'raise', amount: 20_000 });
+  assert.equal(h.table.seats[asiento]!.bet, 20_000, 'subió a 20.000');
+  assert.equal(h.table.seats[asiento]!.chips, 4_000, 'y le quedaron fichas');
+  assert.equal(h.table.seats[asiento]!.allIn, false, 'no quedó all-in');
+
+  const tercero = h.current()!;
+  assert.equal(h.table.legalActions(seatOf(h, tercero))!.canRaise, true, 'quien no habló todavía puede resubir');
+  h.table.act(tercero, { type: 'call' });
+
+  // La subida corta no reabre la ronda: el que apostó solo completa o se va.
+  const vuelta = h.table.legalActions(seatOf(h, apostador))!;
+  assert.equal(vuelta.canRaise, false, 'el que apostó no puede resubir sobre una subida corta');
+  assert.equal(vuelta.callAmount, 7_000, 'solo completa la diferencia');
+});
+
+test('la subida corta tiene piso de una ciega grande', () => {
+  const h = makeTable(2, { chipUnit: 50, smallBlind: 400, bigBlind: 800, startingStack: 200_000 });
+  h.table.start(h.ids[0]!);
+  while (h.table.getStateFor(h.ids[0]!).phase === 'preflop') {
+    const playerId = h.current()!;
+    const legal = h.table.legalActions(seatOf(h, playerId))!;
+    h.table.act(playerId, legal.canCheck ? { type: 'check' } : { type: 'call' });
+  }
+  const apostador = h.current()!;
+  h.table.act(apostador, { type: 'bet', amount: 13_000 });
+
+  const responde = h.current()!;
+  const asiento = seatOf(h, responde);
+  h.table.seats[asiento]!.chips = 15_000;
+
+  assert.throws(
+    () => h.table.act(responde, { type: 'raise', amount: 13_050 }),
+    /subida mínima/,
+    'no se puede subir de a migas para trabar al que apostó',
+  );
+  h.table.act(responde, { type: 'raise', amount: 13_800 });
+  assert.equal(h.table.seats[asiento]!.bet, 13_800);
+
+  // Y si ni para eso alcanza, ahí sí la única subida es todo el stack.
+  const corto = makeTable(2, { chipUnit: 50, smallBlind: 400, bigBlind: 800, startingStack: 200_000 });
+  corto.table.start(corto.ids[0]!);
+  while (corto.table.getStateFor(corto.ids[0]!).phase === 'preflop') {
+    const playerId = corto.current()!;
+    const legal = corto.table.legalActions(seatOf(corto, playerId))!;
+    corto.table.act(playerId, legal.canCheck ? { type: 'check' } : { type: 'call' });
+  }
+  corto.table.act(corto.current()!, { type: 'bet', amount: 13_000 });
+  const cortoAsiento = seatOf(corto, corto.current()!);
+  corto.table.seats[cortoAsiento]!.chips = 13_400;
+  const legalCorto = corto.table.legalActions(cortoAsiento)!;
+  assert.equal(legalCorto.minRaiseTo, 13_400, 'el piso se recorta al stack');
+  assert.equal(legalCorto.raiseIsAllIn, true, 'y entonces sí es all-in o nada');
 });

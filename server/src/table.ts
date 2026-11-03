@@ -696,7 +696,13 @@ export class Table {
     // solo puede igualar o retirarse.
     const canAggress = !this.isLockedToCall(seatIndex) && maxRaiseTo > this.currentBet;
     const fullRaiseTo = this.fullRaiseTarget();
-    const minRaiseTo = Math.min(fullRaiseTo, maxRaiseTo);
+    // Regla de la casa: a quien no le alcanza para la subida completa no se lo
+    // obliga a ir con todo. Puede subir lo que quiera, con un piso de una ciega
+    // grande por encima de la apuesta —el salto mínimo de siempre—, y esa
+    // subida corta no reabre la ronda, igual que un all-in corto.
+    const minRaiseTo = fullRaiseTo <= maxRaiseTo
+      ? fullRaiseTo
+      : Math.min(this.currentBet + this.blinds.big, maxRaiseTo);
 
     return {
       canFold: true,
@@ -723,8 +729,9 @@ export class Table {
   }
 
   /**
-   * Un all-in que no alcanza para subida completa no reabre la apuesta: quien
-   * ya había actuado e igualado solo puede completar o retirarse.
+   * Una subida que no llega a ser completa no reabre la apuesta: quien ya había
+   * actuado e igualado solo puede completar o retirarse. Vale tanto para un
+   * all-in corto como para la subida corta de quien no llega al mínimo.
    */
   private isLockedToCall(seatIndex: number): boolean {
     const seat = this.seats[seatIndex]!;
