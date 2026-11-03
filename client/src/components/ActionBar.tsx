@@ -53,9 +53,16 @@ function ChipBetting({ state, onAct }: Props) {
   let hint = canRaise
     ? `Mínimo para ${legal.canBet ? 'apostar' : 'subir'}: $${formatStack(legal.minRaiseTo)} en total`
     : 'En este turno solo podés igualar o retirarte';
+  // Subir obliga a igualar el tamaño de la última apuesta. Cuando no te alcanza
+  // para eso, la única subida posible es con todas tus fichas: hay que decirlo,
+  // si no parece que el botón de confirmar está roto.
+  if (canRaise && legal.raiseIsAllIn) {
+    hint = `Subir pide llegar a $${formatStack(legal.fullRaiseTo)} y no te alcanza: podés igualar o ir con todo`;
+  }
   if (isCall) hint = `Vas a igualar con $${formatStack(selected)}${allIn ? ' (all-in)' : ''}`;
   else if (validRaise && selected > 0) hint = `Tu apuesta total será $${formatStack(target)}${allIn ? ' (all-in)' : ''}`;
   else if (selected > 0 && target < state.currentBet) hint = `Faltan $${formatStack(legal.callAmount - selected)} para igualar`;
+  else if (selected > 0 && canRaise) hint = `Con eso no subís: hay que llegar a $${formatStack(legal.minRaiseTo)} en total`;
 
   return (
     <div className="actions actions--chips" aria-label="Tus acciones de juego">

@@ -164,6 +164,12 @@ export interface LegalActions {
   minRaiseTo: number;
   /** Total máximo = todo el stack. */
   maxRaiseTo: number;
+  /**
+   * Total que exigiría una subida completa, SIN recortar por el stack. Cuando
+   * no alcanza, `minRaiseTo` baja al all-in y este número es el que explica
+   * por qué: subir obliga a igualar el tamaño de la última apuesta.
+   */
+  fullRaiseTo: number;
   /** El stack no alcanza para la subida mínima: solo queda all-in. */
   raiseIsAllIn: boolean;
 }

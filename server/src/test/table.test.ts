@@ -710,3 +710,35 @@ test('la subida de ciegas queda anotada en el registro de la mesa', () => {
   assert.equal(avisos.length, 1, 'se avisa una sola vez por ronda');
   assert.match(avisos[0]!.text, /20\/40/, 'y dice a cuánto pasaron');
 });
+
+test('frente a una apuesta grande, subir pide igualar su tamaño o ir all-in', () => {
+  // Reporte real: con una apuesta de 13.000 en la mesa no se podía subir a
+  // 20.000. Es la regla, no una falla: la subida mínima es a 26.000.
+  const h = makeTable(2, { chipUnit: 50, smallBlind: 400, bigBlind: 800, startingStack: 200_000 });
+  h.table.start(h.ids[0]!);
+  while (h.table.getStateFor(h.ids[0]!).phase === 'preflop') {
+    const playerId = h.current()!;
+    const legal = h.table.legalActions(seatOf(h, playerId))!;
+    h.table.act(playerId, legal.canCheck ? { type: 'check' } : { type: 'call' });
+  }
+
+  const apostador = h.current()!;
+  const responde = h.ids.find((id) => id !== apostador)!;
+  h.table.act(apostador, { type: 'bet', amount: 13_000 });
+
+  const asiento = seatOf(h, responde);
+  h.table.seats[asiento]!.chips = 100_000;
+  const holgado = h.table.legalActions(asiento)!;
+  assert.equal(holgado.fullRaiseTo, 26_000, 'subir pide igualar el tamaño de la apuesta');
+  assert.equal(holgado.minRaiseTo, 26_000, 'y con fichas de sobra ese es el mínimo');
+  assert.equal(holgado.raiseIsAllIn, false);
+  assert.throws(() => h.table.act(responde, { type: 'raise', amount: 20_000 }), /subida mínima/);
+
+  // Con menos de 26.000 encima, la única subida que queda es todo el stack.
+  h.table.seats[asiento]!.chips = 24_000;
+  const corto = h.table.legalActions(asiento)!;
+  assert.equal(corto.fullRaiseTo, 26_000, 'el total que se pediría no cambia');
+  assert.equal(corto.minRaiseTo, 24_000, 'pero el mínimo baja al all-in');
+  assert.equal(corto.maxRaiseTo, 24_000);
+  assert.equal(corto.raiseIsAllIn, true, 'y se avisa que solo queda ir con todo');
+});

@@ -695,7 +695,8 @@ export class Table {
     // Si ya actuó y lo enfrenta un all-in que no llegó a subida completa,
     // solo puede igualar o retirarse.
     const canAggress = !this.isLockedToCall(seatIndex) && maxRaiseTo > this.currentBet;
-    const minRaiseTo = Math.min(this.fullRaiseTarget(), maxRaiseTo);
+    const fullRaiseTo = this.fullRaiseTarget();
+    const minRaiseTo = Math.min(fullRaiseTo, maxRaiseTo);
 
     return {
       canFold: true,
@@ -706,6 +707,7 @@ export class Table {
       canRaise: this.currentBet > 0 && canAggress,
       minRaiseTo,
       maxRaiseTo,
+      fullRaiseTo,
       raiseIsAllIn: maxRaiseTo <= minRaiseTo,
     };
   }
