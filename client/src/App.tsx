@@ -9,7 +9,6 @@ import { SidePanel } from './components/SidePanel';
 import { TableView } from './components/TableView';
 import { TopBar } from './components/TopBar';
 import { TournamentHistory, TournamentPanel } from './components/TournamentPanel';
-import { VoiceWarning } from './components/VoiceBar';
 import { sounds } from './lib/sound';
 import { useVoice } from './lib/useVoice';
 import { useAuth } from './useAuth';
@@ -22,8 +21,14 @@ export function App() {
   const [rankingOpen, setRankingOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [seenChatId, setSeenChatId] = useState(0);
 
   const { state, notify } = game;
+
+  // Los códigos de mensaje empiezan de cero en cada sala.
+  const roomCode = state?.roomCode;
+  useEffect(() => setSeenChatId(0), [roomCode]);
+  const unreadChat = game.chat.reduce((count, message) => count + (message.id > seenChatId ? 1 : 0), 0);
 
   /** Nombre visible de un jugador, para los mensajes del audio. */
   const nameOf = useCallback(
@@ -121,6 +126,7 @@ export function App() {
         connected={game.connected}
         muted={game.muted}
         voice={voice}
+        unreadChat={unreadChat}
         onToggleMuted={game.toggleMuted}
         onTogglePanel={() => setPanelOpen((open) => !open)}
         onShowRanking={() => setRankingOpen(true)}
@@ -134,7 +140,6 @@ export function App() {
         onNotify={notify}
       />
 
-      <VoiceWarning voice={voice} />
       <TournamentPanel state={state} onRebuy={game.rebuy} onWithdraw={game.withdraw} onExit={game.exitRoom} />
 
       <main className="main">
@@ -151,6 +156,7 @@ export function App() {
           open={panelOpen}
           onClose={() => setPanelOpen(false)}
           onSendChat={game.sendChat}
+          onChatSeen={setSeenChatId}
         />
       </main>
 

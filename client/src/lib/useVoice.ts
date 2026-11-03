@@ -55,8 +55,6 @@ export interface VoiceApi {
   speaking: Set<string>;
   /** playerIds conectados por voz, incluido el tuyo. */
   participants: Set<string>;
-  /** El servidor no tiene TURN: puede fallar con datos móviles. */
-  turnMissing: boolean;
   error: string | null;
   start(): Promise<void>;
   stop(): void;
@@ -77,7 +75,6 @@ export function useVoice(options: {
   const [connecting, setConnecting] = useState(false);
   const [speaking, setSpeaking] = useState<Set<string>>(new Set());
   const [participants, setParticipants] = useState<Set<string>>(new Set());
-  const [turnMissing, setTurnMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const localStream = useRef<MediaStream | null>(null);
@@ -236,7 +233,6 @@ export function useVoice(options: {
       localAnalyser.current = makeAnalyser(stream);
 
       iceConfig.current = await request<IceConfig>(socket, 'voice:config');
-      setTurnMissing(!iceConfig.current.hasTurn);
 
       // El que llega ofrece a todos los que ya estaban: un único iniciador
       // por par, sin riesgo de ofertas cruzadas.
@@ -381,7 +377,6 @@ export function useVoice(options: {
     connecting,
     speaking,
     participants,
-    turnMissing,
     error,
     start,
     stop,

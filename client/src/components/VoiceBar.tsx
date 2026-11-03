@@ -47,14 +47,3 @@ export function VoiceBar({ voice }: Props) {
     </div>
   );
 }
-
-/** Aviso de que falta TURN: la voz va a fallar con datos móviles. */
-export function VoiceWarning({ voice }: Props) {
-  if (!voice.active || !voice.turnMissing) return null;
-  return (
-    <div className="voice-warning">
-      El servidor no tiene TURN configurado. El audio puede no conectar para quien esté con datos
-      móviles.
-    </div>
-  );
-}

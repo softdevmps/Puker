@@ -10,6 +10,8 @@ interface Props {
   connected: boolean;
   muted: boolean;
   voice: VoiceApi;
+  /** Mensajes de chat que todavía no viste. */
+  unreadChat: number;
   onToggleMuted(): void;
   onTogglePanel(): void;
   onShowRanking(): void;
@@ -28,6 +30,7 @@ export function TopBar({
   connected,
   muted,
   voice,
+  unreadChat,
   onToggleMuted,
   onTogglePanel,
   onShowRanking,
@@ -108,8 +111,18 @@ export function TopBar({
 
         <VoiceBar voice={voice} />
 
-        <button type="button" className="btn btn--icon" onClick={onTogglePanel} title="Historial y chat">
+        <button
+          type="button"
+          className="btn btn--icon btn--badged"
+          onClick={onTogglePanel}
+          title={unreadChat > 0 ? `Historial y chat · ${unreadChat} sin leer` : 'Historial y chat'}
+        >
           ☰
+          {unreadChat > 0 ? (
+            <span className="btn__badge" aria-label={`${unreadChat} mensajes sin leer`}>
+              {unreadChat > 9 ? '9+' : unreadChat}
+            </span>
+          ) : null}
         </button>
         <button
           type="button"

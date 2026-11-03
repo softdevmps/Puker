@@ -8,9 +8,11 @@ interface Props {
   open: boolean;
   onClose(): void;
   onSendChat(text: string): Promise<void>;
+  /** Avisa hasta qué mensaje llegó a ver, para apagar el contador. */
+  onChatSeen(lastId: number): void;
 }
 
-export function SidePanel({ logs, chat, open, onClose, onSendChat }: Props) {
+export function SidePanel({ logs, chat, open, onClose, onSendChat, onChatSeen }: Props) {
   const [tab, setTab] = useState<'log' | 'chat'>('log');
   const [draft, setDraft] = useState('');
   const logEnd = useRef<HTMLDivElement | null>(null);
@@ -23,6 +25,13 @@ export function SidePanel({ logs, chat, open, onClose, onSendChat }: Props) {
   useEffect(() => {
     if (tab === 'chat') chatEnd.current?.scrollIntoView({ block: 'end' });
   }, [chat, tab]);
+
+  // Con el chat a la vista, lo que llega ya está leído.
+  useEffect(() => {
+    if (!open || tab !== 'chat') return;
+    const last = chat[chat.length - 1];
+    if (last) onChatSeen(last.id);
+  }, [open, tab, chat, onChatSeen]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
