@@ -1757,15 +1757,24 @@ input[type='range'] {
     font-size: 16px;
   }
 
+  /*
+   * La fila va con `minmax(0, 1fr)` y no `auto`: con `auto` la grilla la mide
+   * por su contenido, y un registro largo la estiraba a miles de píxeles. La
+   * mesa, que comparte fila, se estiraba igual y todo se iba de la ventana.
+   */
   .main {
     display: grid;
     grid-template-columns: 1fr 340px;
+    grid-template-rows: minmax(0, 1fr);
   }
 
   .panel {
     position: static;
     display: flex;
     width: auto;
+    /* Sin esto el panel desborda su propia fila aunque la fila esté acotada. */
+    min-height: 0;
+    overflow: hidden;
     box-shadow: none;
   }
 

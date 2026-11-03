@@ -15,16 +15,15 @@ interface Props {
 export function SidePanel({ logs, chat, open, onClose, onSendChat, onChatSeen }: Props) {
   const [tab, setTab] = useState<'log' | 'chat'>('log');
   const [draft, setDraft] = useState('');
-  const logEnd = useRef<HTMLDivElement | null>(null);
-  const chatEnd = useRef<HTMLDivElement | null>(null);
+  const body = useRef<HTMLDivElement | null>(null);
 
+  // Lo último, abajo. Se mueve `scrollTop` y no `scrollIntoView`: este arrastra
+  // también a los padres, y como la mesa los recorta con `overflow: hidden`, la
+  // página terminaba corrida sin manera de volver.
   useEffect(() => {
-    if (tab === 'log') logEnd.current?.scrollIntoView({ block: 'end' });
-  }, [logs, tab]);
-
-  useEffect(() => {
-    if (tab === 'chat') chatEnd.current?.scrollIntoView({ block: 'end' });
-  }, [chat, tab]);
+    const visible = body.current;
+    if (visible) visible.scrollTop = visible.scrollHeight;
+  }, [logs, chat, tab]);
 
   // Con el chat a la vista, lo que llega ya está leído.
   useEffect(() => {
@@ -70,25 +69,23 @@ export function SidePanel({ logs, chat, open, onClose, onSendChat, onChatSeen }:
       </div>
 
       {tab === 'log' ? (
-        <div className="panel__body">
+        <div className="panel__body" ref={body}>
           {logs.length === 0 ? <p className="panel__empty">Todavía no pasó nada.</p> : null}
           {logs.map((entry) => (
             <p key={entry.id} className={`log log--${entry.kind}`}>
               {entry.text}
             </p>
           ))}
-          <div ref={logEnd} />
         </div>
       ) : (
         <>
-          <div className="panel__body">
+          <div className="panel__body" ref={body}>
             {chat.length === 0 ? <p className="panel__empty">Decile algo a la mesa.</p> : null}
             {chat.map((message) => (
               <p key={message.id} className="chat">
                 <strong>{message.from}:</strong> {message.text}
               </p>
             ))}
-            <div ref={chatEnd} />
           </div>
 
           <form className="panel__compose" onSubmit={submit}>
