@@ -475,6 +475,66 @@ test('el timeout pasa si puede y se retira si no', () => {
   assert.equal(h2.table.getStateFor(h2.ids[0]!).phase, 'flop');
 });
 
+test('quien vuelve del descanso paga la ciega grande antes de recibir el botón', () => {
+  // Regresión: al volver se entraba directo en el botón sin pagar ninguna
+  // ciega, es decir la mejor posición de la mesa gratis. Bastaba pararse una
+  // mano y volver en el momento justo.
+  const h = makeTable(3, { startingStack: 1_000_000 });
+  h.table.setSittingOut(h.ids[2]!, true);
+  h.table.start(h.ids[0]!);
+
+  const playOut = () => {
+    let guard = 0;
+    while (h.table.isHandLive() && guard++ < 60) {
+      const playerId = h.current();
+      if (!playerId) break;
+      const legal = h.table.legalActions(seatOf(h, playerId))!;
+      h.table.act(playerId, legal.canCheck ? { type: 'check' } : { type: 'call' });
+    }
+    h.table.tick(Date.now() + 60_000);
+  };
+
+  playOut(); // mano 1: mano a mano entre los asientos 0 y 1
+  h.table.setSittingOut(h.ids[2]!, false);
+  assert.equal(h.table.seats[2]!.awaitingBigBlind, true, 'vuelve debiendo una ciega grande');
+  playOut(); // mano 2, y arranca la 3 ya con el que volvió
+
+  const state = h.table.getStateFor(h.ids[0]!);
+  assert.notEqual(state.dealerSeat, 2, 'el botón no puede caerle al que recién volvió');
+  assert.equal(
+    state.players.find((p) => p.seat === 2)!.bet,
+    h.table.settings.bigBlind,
+    'entra pagando la ciega grande',
+  );
+  assert.equal(h.table.seats[2]!.awaitingBigBlind, false, 'cumplida la ciega, ya puede ser botón');
+
+  // Lo mismo vale para quien se sienta con la partida ya en marcha.
+  h.table.sit('nuevo', 'Nuevo', 3);
+  assert.equal(h.table.seats[3]!.awaitingBigBlind, true);
+});
+
+test('reducir la mesa no echa a nadie ni deja la partida sin anfitrión', () => {
+  // Regresión: al achicar la mesa se liberaban los asientos altos sin reasignar
+  // el anfitrión, así que `hostId` apuntaba a alguien que ya no estaba sentado
+  // y nadie podía empezar, pausar ni volver a cambiar las reglas.
+  const table = new Table('SEATS', { tournament: false, maxSeats: 9, allowRebuy: false });
+  for (let i = 0; i < 5; i++) table.sit(`p${i}`, `J${i}`);
+  table.moveSeat('p0', 8); // el anfitrión se corre al último asiento
+
+  assert.throws(() => table.updateSettings({ maxSeats: 3 }), /5 jugadores sentados/);
+  assert.equal(table.settings.maxSeats, 9, 'el intento fallido no cambia las reglas');
+  assert.equal(table.occupiedCount, 5, 'no se fue nadie');
+  assert.ok(table.findSeat(table.hostId!) !== null, 'el anfitrión sigue sentado');
+
+  // Con lugar suficiente, los asientos altos se corren solos y nadie se va.
+  table.updateSettings({ maxSeats: 5 });
+  assert.equal(table.occupiedCount, 5);
+  assert.ok(table.seats.slice(5).every((seat) => seat === null), 'nadie queda fuera del límite');
+  assert.ok(table.findSeat(table.hostId!) !== null, 'el anfitrión conserva su asiento');
+  table.start(table.hostId!);
+  assert.equal(table.running, true, 'la mesa sigue siendo jugable');
+});
+
 test('se juegan muchas manos al azar sin perder ni inventar fichas', () => {
   const rnd = mulberry32(20261023);
 

@@ -117,13 +117,20 @@ export class RoomManager {
     return message;
   }
 
-  /** Borra las salas vacías y viejas. */
+  /**
+   * Borra las salas abandonadas y viejas.
+   *
+   * Se mira si queda alguien conectado, no si quedan asientos ocupados: en una
+   * partida con pozo la desconexión no libera el asiento (no puede decidirle la
+   * recompra a nadie), así que mirar los asientos dejaba esas salas en memoria
+   * para siempre y al llegar a MAX_ROOMS el servidor no aceptaba más mesas.
+   */
   cleanup(now = Date.now()): string[] {
     const removed: string[] = [];
     for (const [code, room] of this.rooms) {
-      const empty = room.table.occupiedCount === 0;
+      const abandoned = room.table.connectedCount === 0;
       const idle = now - room.lastActivityAt > IDLE_ROOM_TTL_MS;
-      if (empty && (idle || now - room.createdAt > IDLE_ROOM_TTL_MS)) {
+      if (abandoned && (idle || now - room.createdAt > IDLE_ROOM_TTL_MS)) {
         this.rooms.delete(code);
         removed.push(code);
       }

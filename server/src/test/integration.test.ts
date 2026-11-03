@@ -571,6 +571,65 @@ test('el ranking acumula el resultado de las manos jugadas', async () => {
   });
 });
 
+test('el ranking resuelve mejor mano, bote máximo y última fecha en una sola consulta', async () => {
+  await withServer(async (ctx) => {
+    const { store } = ctx.server;
+    const uno = store.createUser({ username: 'uno', displayName: 'Uno' });
+    const dos = store.createUser({ username: 'dos', displayName: 'Dos' });
+    store.recordHand([
+      { userId: uno.id, roomCode: 'AAAA', handNumber: 1, netChips: 500, won: true, potSize: 1000, handLabel: 'Pareja de Reyes', playedAt: 1000 },
+      { userId: uno.id, roomCode: 'AAAA', handNumber: 2, netChips: -200, won: false, potSize: 9000, handLabel: null, playedAt: 2000 },
+      { userId: uno.id, roomCode: 'AAAA', handNumber: 3, netChips: 300, won: true, potSize: 4000, handLabel: 'Color al As', playedAt: 3000 },
+      { userId: dos.id, roomCode: 'AAAA', handNumber: 1, netChips: -100, won: false, potSize: 1000, handLabel: null, playedAt: 1500 },
+    ]);
+
+    const ranking = store.ranking(10);
+    assert.equal(ranking[0]!.userId, uno.id, 'ordena por fichas netas');
+
+    const ganador = ranking.find((row) => row.userId === uno.id)!;
+    assert.equal(ganador.net, 600);
+    assert.equal(ganador.hands, 3);
+    assert.equal(ganador.wins, 2);
+    assert.equal(ganador.biggestPot, 4000, 'solo cuentan los botes que ganó');
+    assert.equal(ganador.bestHand, 'Color al As', 'la mejor mano es la del bote ganado más grande');
+    assert.equal(ganador.lastPlayedAt, 3000);
+
+    const perdedor = ranking.find((row) => row.userId === dos.id)!;
+    assert.equal(perdedor.bestHand, null, 'sin manos ganadas no hay mejor mano');
+    assert.equal(perdedor.biggestPot, 0);
+  });
+});
+
+test('una sala sin nadie conectado se libera aunque los asientos sigan ocupados', async () => {
+  await withServer(async (ctx) => {
+    const a = await newPlayer(ctx, 'abandona');
+    const b = await newPlayer(ctx, 'tambien');
+    const c = await newPlayer(ctx, 'tercero');
+    const room = await a.request<JoinResult>('room:create');
+    await b.request('room:join', { code: room.code });
+    await c.request('room:join', { code: room.code });
+    await a.waitFor((s) => s.players.length === 3, 'tres jugadores');
+    // Con pozo en juego la desconexión no libera el asiento: no puede
+    // decidirle la recompra a nadie.
+    await a.request('game:start');
+
+    const table = ctx.server.manager.get(room.code)!.table;
+    a.close(); b.close(); c.close();
+    for (let i = 0; i < 100 && table.connectedCount > 0; i++) await delay(20);
+
+    assert.equal(table.connectedCount, 0, 'no quedó nadie conectado');
+    assert.equal(table.occupiedCount, 3, 'y los asientos siguen ocupados');
+
+    assert.deepEqual(ctx.server.manager.cleanup(), [], 'recién abandonada no se borra');
+    assert.deepEqual(
+      ctx.server.manager.cleanup(Date.now() + 3 * 60 * 60 * 1000),
+      [room.code],
+      'pasado el plazo la sala se libera y no ocupa un lugar para siempre',
+    );
+    assert.equal(ctx.server.manager.get(room.code), undefined);
+  });
+});
+
 test('quien se registra aparece en el ranking aunque no haya jugado', async () => {
   await withServer(async (ctx) => {
     const client = new TestClient(ctx.port);

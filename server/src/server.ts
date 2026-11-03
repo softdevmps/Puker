@@ -46,6 +46,18 @@ const CLEANUP_MS = 5 * 60 * 1000;
 const here = dirname(fileURLToPath(import.meta.url));
 const defaultClientDist = resolve(here, '../../client/dist');
 
+/**
+ * Único origen que se acepta en el websocket, o null para no restringir.
+ *
+ * Solo se fija si estamos en producción Y la URL pública es de verdad: una URL
+ * de desarrollo acá significa que falta configurarla, y restringir con ella
+ * dejaría la aplicación inutilizable.
+ */
+export const pinnedOrigin: string[] | null =
+  config.isProduction && !/^https?:\/\/localhost(:|\/|$)/.test(config.publicUrl)
+    ? [config.publicUrl]
+    : null;
+
 interface SocketData {
   user?: UserRow;
   player?: PlayerIdentity;
@@ -193,7 +205,14 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
   }
 
   const io: PukerServer['io'] = new Server(httpServer, {
-    cors: { origin: true, credentials: true },
+    // En producción el cliente se sirve desde el mismo origen, así que solo se
+    // acepta ese. En desarrollo el cliente vive en otro puerto (Vite) y los
+    // tests se conectan desde Node, donde no hay origen que validar.
+    //
+    // Si en producción quedó la URL de desarrollo, no se restringe nada: con el
+    // origen mal puesto el navegador no se conecta a ninguna mesa y la pantalla
+    // se queda en "Reconectando" sin decir por qué. Es peor que no restringir.
+    cors: { origin: pinnedOrigin ?? true, credentials: true },
     pingTimeout: 25_000,
     pingInterval: 10_000,
   });

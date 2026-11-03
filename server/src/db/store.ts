@@ -131,6 +131,13 @@ const MIGRATIONS: { name: string; sql: string }[] = [
       );
     `,
   },
+  {
+    name: '004-indice-ranking',
+    sql: `
+      -- El ranking agrupa por jugador y busca su mano ganadora de mayor bote.
+      CREATE INDEX idx_hands_user_won ON hand_results(user_id, won, pot_size);
+    `,
+  },
 ];
 
 export class Store {
@@ -367,43 +374,50 @@ export class Store {
   /**
    * Ranking general. Incluye a quien todavía no jugó ninguna mano (en 0), para
    * que alguien recién registrado se vea en la tabla.
+   *
+   * Sale todo en una sola consulta: la mejor mano se buscaba con un SELECT por
+   * jugador, así que el endpoint hacía 1+N viajes a la base en cada visita.
    */
   ranking(limit = 100): RankingRow[] {
-    const rows = this.db
+    return this.db
       .prepare(
-        `SELECT
-           u.id                                   AS userId,
-           u.display_name                         AS displayName,
-           u.avatar_url                           AS avatarUrl,
-           COALESCE(SUM(h.net_chips), 0)          AS net,
-           COUNT(h.id)                            AS hands,
-           COALESCE(SUM(h.won), 0)                AS wins,
-           COALESCE(MAX(CASE WHEN h.won = 1 THEN h.pot_size END), 0) AS biggestPot,
-           MAX(h.played_at)                       AS lastPlayedAt
+        `WITH totals AS (
+           SELECT user_id,
+                  SUM(net_chips) AS net,
+                  COUNT(*)       AS hands,
+                  SUM(won)       AS wins,
+                  COALESCE(MAX(CASE WHEN won = 1 THEN pot_size END), 0) AS biggestPot,
+                  MAX(played_at) AS lastPlayedAt
+           FROM hand_results
+           GROUP BY user_id
+         ),
+         best AS (
+           SELECT user_id, hand_label FROM (
+             SELECT user_id, hand_label,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY user_id ORDER BY pot_size DESC, id DESC
+                    ) AS row_num
+             FROM hand_results
+             WHERE won = 1 AND hand_label IS NOT NULL
+           )
+           WHERE row_num = 1
+         )
+         SELECT
+           u.id                      AS userId,
+           u.display_name            AS displayName,
+           u.avatar_url              AS avatarUrl,
+           COALESCE(t.net, 0)        AS net,
+           COALESCE(t.hands, 0)      AS hands,
+           COALESCE(t.wins, 0)       AS wins,
+           COALESCE(t.biggestPot, 0) AS biggestPot,
+           b.hand_label              AS bestHand,
+           t.lastPlayedAt            AS lastPlayedAt
          FROM users u
-         LEFT JOIN hand_results h ON h.user_id = u.id
-         GROUP BY u.id
+         LEFT JOIN totals t ON t.user_id = u.id
+         LEFT JOIN best   b ON b.user_id = u.id
          ORDER BY net DESC, wins DESC, hands DESC
          LIMIT ?`,
       )
-      .all(limit) as Omit<RankingRow, 'bestHand'>[];
-
-    // La mejor mano mostrada se busca aparte: meterla en el GROUP BY de arriba
-    // obligaba a una subconsulta por fila bastante más cara de leer.
-    const bestHand = this.db.prepare(
-      `SELECT hand_label FROM hand_results
-       WHERE user_id = ? AND won = 1 AND hand_label IS NOT NULL
-       ORDER BY pot_size DESC LIMIT 1`,
-    );
-
-    return rows.map((row) => ({
-      ...row,
-      bestHand:
-        (bestHand.get(row.userId) as { hand_label: string } | undefined)?.hand_label ?? null,
-    }));
-  }
-
-  statsFor(userId: number): RankingRow | null {
-    return this.ranking(1000).find((row) => row.userId === userId) ?? null;
+      .all(limit) as unknown as RankingRow[];
   }
 }

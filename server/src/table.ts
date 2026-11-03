@@ -64,6 +64,13 @@ export interface Seat {
 
   // --- estado de sesión ---
   sittingOut: boolean;
+  /**
+   * Entró o volvió del descanso con la partida en marcha. Recibe cartas y paga
+   * las ciegas que le toquen, pero no puede recibir el botón hasta pagar una
+   * ciega grande: si no, bastaba con pararse y volver para entrar en la mejor
+   * posición de la mesa sin haber pagado nada.
+   */
+  awaitingBigBlind: boolean;
   connected: boolean;
   disconnectedAt: number | null;
   lastAction: string | null;
@@ -149,6 +156,11 @@ export class Table {
     return this.seats.filter(Boolean).length;
   }
 
+  /** Asientos con alguien conectado ahora mismo. */
+  get connectedCount(): number {
+    return this.seats.filter((seat) => seat?.connected).length;
+  }
+
   /** Primer asiento libre dentro de los habilitados, o null si está llena. */
   firstFreeSeat(): number | null {
     for (let i = 0; i < this.settings.maxSeats; i++) {
@@ -191,6 +203,7 @@ export class Table {
       committed: 0,
       hasActed: false,
       sittingOut: false,
+      awaitingBigBlind: this.handNumber > 0,
       connected: true,
       disconnectedAt: null,
       lastAction: null,
@@ -281,6 +294,7 @@ export class Table {
     if (!seat) throw new Error('No estás sentado en la mesa');
     seat.sittingOut = sitOut;
     seat.missedTurns = 0;
+    if (!sitOut && this.handNumber > 0) seat.awaitingBigBlind = true;
     this.addLog(`${seat.name} ${sitOut ? 'se puso de descanso' : 'volvió a jugar'}`, 'system');
     if (!sitOut) this.ensureEnoughPlayers();
   }
@@ -327,22 +341,31 @@ export class Table {
     }
     if (this.isHandLive()) throw new Error('No se pueden cambiar las reglas con una mano en curso');
 
-    const merged = { ...this.settings, ...patch };
-    this.settings = merged;
+    const previous = this.settings;
+    this.settings = { ...previous, ...patch };
     this.normalizeSettings();
 
-    // Si se reduce la mesa, hay que liberar los asientos que quedaron afuera.
+    // Reducir la mesa nunca echa a nadie: sacar un asiento dejaba al anfitrión
+    // fuera de la mesa con `hostId` apuntándolo, y entonces nadie podía
+    // empezar, pausar ni volver a cambiar las reglas.
+    if (this.occupiedCount > this.settings.maxSeats) {
+      const wanted = this.settings.maxSeats;
+      this.settings = previous;
+      throw new Error(
+        `Hay ${this.occupiedCount} jugadores sentados: primero tienen que levantarse para dejar la mesa en ${wanted} lugares`,
+      );
+    }
+
+    // Los que quedaron en un asiento alto se corren a uno libre. El chequeo de
+    // arriba garantiza que siempre haya lugar.
     for (let i = this.settings.maxSeats; i < MAX_SEATS; i++) {
       const seat = this.seats[i];
       if (!seat) continue;
       const free = this.firstFreeSeat();
-      if (free !== null) {
-        this.seats[free] = seat;
-      } else {
-        this.departedStacks.set(seat.playerId, seat.chips);
-        this.addLog(`${seat.name} quedó fuera de la mesa al reducir los asientos`, 'system');
-      }
+      if (free === null) break;
+      this.seats[free] = seat;
       this.seats[i] = null;
+      if (this.button === i) this.button = free;
     }
 
     this.addLog(
@@ -458,7 +481,13 @@ export class Table {
       seat.wonLast = 0;
     }
 
-    this.button = this.nextOccupiedFrom(this.button === null ? 0 : this.button + 1, eligible);
+    // El botón solo rota entre quienes ya pagaron una ciega grande acá: quien
+    // recién llegó se lo saltea hasta cumplir con la suya.
+    const established = eligible.filter((index) => !this.seats[index]!.awaitingBigBlind);
+    this.button = this.nextOccupiedFrom(
+      this.button === null ? 0 : this.button + 1,
+      established.length > 0 ? established : eligible,
+    );
     this.phase = 'preflop';
 
     const heads = eligible.length === 2;
@@ -482,6 +511,8 @@ export class Table {
 
     this.postBlind(sbSeat, this.settings.smallBlind, 'ciega chica');
     this.postBlind(bbSeat, this.settings.bigBlind, 'ciega grande');
+    // Cumplida la ciega grande, ya puede recibir el botón.
+    this.seats[bbSeat]!.awaitingBigBlind = false;
 
     this.currentBet = Math.max(
       this.seats[sbSeat]!.bet,

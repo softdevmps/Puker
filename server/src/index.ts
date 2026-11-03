@@ -1,7 +1,7 @@
 /** Punto de entrada: levanta el servidor y lo apaga con prolijidad. */
 
 import { config } from './config.js';
-import { createPukerServer } from './server.js';
+import { createPukerServer, pinnedOrigin } from './server.js';
 
 const server = createPukerServer();
 
@@ -12,6 +12,13 @@ if (!server.servingClient) {
   console.log('  Cliente en desarrollo: http://localhost:5173');
 }
 console.log(`  Base de datos: ${config.databaseFile}`);
+console.log(`  URL pública: ${config.publicUrl}`);
+if (config.isProduction && !pinnedOrigin) {
+  console.warn(
+    '  ATENCIÓN: PUBLIC_URL quedó con la URL de desarrollo. El login con Google no va a\n' +
+      '  volver bien y el websocket acepta cualquier origen. Cargá la URL real del sitio.',
+  );
+}
 console.log(`  Login con Google: ${config.google.enabled ? 'activado' : 'desactivado'}`);
 console.log(
   `  Voz: STUN ${config.voice.stunUrls.length} servidor(es), TURN ${

@@ -19,8 +19,15 @@ function env(name: string, fallback?: string): string | undefined {
 
 const isProduction = env('NODE_ENV') === 'production';
 
-/** URL pública del sitio. Google la necesita para volver después del login. */
-const publicUrl = (env('PUBLIC_URL') ?? 'http://localhost:5173').replace(/\/$/, '');
+/**
+ * URL pública del sitio. Google la necesita para volver después del login y en
+ * producción es también el origen que acepta el websocket.
+ *
+ * Render inyecta `RENDER_EXTERNAL_URL` solo, así que sirve de respaldo cuando
+ * se olvidan de cargar `PUBLIC_URL` a mano.
+ */
+const publicUrl = (env('PUBLIC_URL') ?? env('RENDER_EXTERNAL_URL') ?? 'http://localhost:5173')
+  .replace(/\/$/, '');
 
 const googleClientId = env('GOOGLE_CLIENT_ID');
 const googleClientSecret = env('GOOGLE_CLIENT_SECRET');
