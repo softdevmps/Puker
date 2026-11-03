@@ -94,7 +94,7 @@ export function TournamentResultDetails({ result }: { result: TournamentResult }
       <span>{p.name}<small>{p.rebuyUsed ? 'Entrada + recompra' : 'Entrada'} · aportó {formatPesos(p.investedCents)}</small></span>
       <span>Cobra {formatPesos(p.payoutCents)}<small>Neto {p.netCents > 0 ? '+' : ''}{formatPesos(p.netCents)}</small></span>
     </div>)}</div>
-    <p className="field__hint">Resultado neto = cobro − aporte. Los centavos del redondeo se distribuyen sin perder parte del pozo. Este resumen lleva las cuentas; no realiza cobros ni transferencias.</p>
+    <p className="field__hint">El neto es lo que cobrás menos lo que pusiste. Puker solo lleva la cuenta: las transferencias las hacen ustedes.</p>
   </>;
 }
 

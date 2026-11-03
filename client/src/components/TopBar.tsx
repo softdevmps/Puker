@@ -99,7 +99,7 @@ export function TopBar({
 
       <div className="topbar__buttons">
         {canStart ? (
-          <button type="button" className="btn btn--small btn--primary" disabled={!enoughPlayers || state.tournament?.status === 'awaiting-rebuy'} onClick={onStart} title={`Se necesitan al menos ${minimumPlayers} jugadores`}>
+          <button type="button" className="btn btn--small btn--primary" disabled={!enoughPlayers || state.tournament?.status === 'awaiting-rebuy'} onClick={onStart} title={enoughPlayers ? undefined : `Faltan jugadores: hacen falta ${minimumPlayers}`}>
             {state.handNumber > 0 ? 'Continuar' : 'Empezar'}
           </button>
         ) : null}
@@ -162,8 +162,8 @@ export function TopBar({
             </button>
 
             {you && state.settings.allowRebuy ? (
-              <div className="sheet__item">
-                {you.rebuyUsed ? 'Recarga usada · 0 disponibles' : 'Una recarga disponible por partida'}
+              <div className="sheet__item sheet__item--note">
+                {you.rebuyUsed ? 'Ya usaste tu recarga' : 'Te queda una recarga'}
               </div>
             ) : null}
 

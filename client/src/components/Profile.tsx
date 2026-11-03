@@ -82,14 +82,14 @@ export function Profile({ user, onSave, onClose }: {
           <div><span className="field__label">Foto de perfil</span>
             <input ref={photoInput} type="file" hidden accept="image/jpeg,image/png,image/webp" disabled={locked} aria-label="Elegir foto de perfil" onChange={(event) => { void selectPhoto(event.target.files?.[0]); event.target.value = ''; }} />
             <button type="button" className="btn btn--small btn--ghost" disabled={locked} onClick={() => photoInput.current?.click()}>Elegir foto</button>
-            <small>JPG, PNG o WebP · hasta 5 MB. Se recorta al centro.</small>
+            <small>JPG, PNG o WebP, hasta 5 MB.</small>
             {(avatar === undefined ? user.avatarUrl : avatar) ? <button className="btn btn--small btn--ghost" type="button" disabled={locked} onClick={() => { setAvatar(null); setSaved(false); }}>Quitar foto</button> : null}
           </div>
         </div>
         <p className="profile-account">@{user.username} · Desde {new Date(user.createdAt).toLocaleDateString('es-AR')}</p>
         <label className="field" htmlFor="profile-name"><span className="field__label">Nombre en la mesa</span><input id="profile-name" className="field__input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required minLength={2} maxLength={16} disabled={locked} autoComplete="nickname" /></label>
         <label className="field" htmlFor="profile-bio"><span className="field__label">Sobre mí <small>(opcional)</small></span><textarea id="profile-bio" className="field__input" value={bio} onChange={(event) => setBio(event.target.value)} maxLength={160} rows={2} disabled={locked} placeholder="Algo breve sobre vos" /></label>
-        <label className="field" htmlFor="profile-alias"><span className="field__label">Alias de transferencia <small>(opcional)</small></span><input id="profile-alias" className="field__input" value={alias} onChange={(event) => setAlias(event.target.value)} maxLength={100} disabled={locked} autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="mi.alias" /><small className="field__hint">Usá tu alias bancario o de billetera. Tus compañeros lo verán en el reparto para poder transferirte.</small></label>
+        <label className="field" htmlFor="profile-alias"><span className="field__label">Alias de transferencia <small>(opcional)</small></span><input id="profile-alias" className="field__input" value={alias} onChange={(event) => setAlias(event.target.value)} maxLength={100} disabled={locked} autoCapitalize="none" autoCorrect="off" spellCheck={false} /><small className="field__hint">Tu alias del banco o de la billetera. Aparece en el reparto final para que te puedan transferir.</small></label>
         {user.transferAlias ? <AliasCopy alias={user.transferAlias} label="Alias guardado" /> : null}
         </div>
         <footer className="profile-footer">

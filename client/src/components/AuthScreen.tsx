@@ -98,17 +98,15 @@ export function AuthScreen({ auth, onNotify }: Props) {
               name="username"
               value={username}
               onChange={(event) => setUsername(event.target.value.toLowerCase())}
-              placeholder="marcos"
               autoComplete="username"
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
               maxLength={16}
             />
-            {mode === 'register' ? (
-              <span className={`field__hint${username.length > 0 && !usernameCheck.ok ? ' field__hint--bad' : ''}`}>
-                {username.length > 0 && !usernameCheck.ok ? usernameCheck.error : 'De 3 a 16 caracteres. Empezá con una letra; sin espacios ni tildes.'}
-              </span>
+            {/* Las reglas aparecen recién si algo no cierra: de entrada son ruido. */}
+            {mode === 'register' && username.length > 0 && !usernameCheck.ok ? (
+              <span className="field__hint field__hint--bad">{usernameCheck.error}</span>
             ) : null}
           </label>
 
@@ -120,7 +118,6 @@ export function AuthScreen({ auth, onNotify }: Props) {
                 name="displayName"
                 value={displayName}
                 onChange={(event) => setDisplayName(event.target.value)}
-                placeholder="Cómo te ven los demás"
                 maxLength={16}
                 autoComplete="nickname"
               />
@@ -139,11 +136,6 @@ export function AuthScreen({ auth, onNotify }: Props) {
               autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
               maxLength={200}
             />
-            {mode === 'register' ? (
-              <span className="field__hint">
-                Mínimo 8 caracteres. Elegí una contraseña propia para Puker.
-              </span>
-            ) : null}
           </label>
 
           {error ? <p className="field__hint field__hint--bad" role="alert">{error}</p> : null}

@@ -138,7 +138,7 @@ export function Lobby({
         {mode === 'create' ? (
           <div className="lobby__panel">
             <div className="field">
-              <span className="field__label">$29.000 por jugador · 52 fichas</span>
+              <span className="field__label">Cada uno arranca con 29.000 en fichas</span>
               <ChipSet />
               <span className="field__hint">Ciega chica: $50 · Ciega grande: $100</span>
             </div>
@@ -147,7 +147,7 @@ export function Lobby({
               <label className="field"><span className="field__label">Entrada (pesos)</span><input className="field__input" type="number" min={1} max={1000000} step={1} value={entryFee} onChange={(event) => setEntryFee(Number(event.target.value))} /></label>
               <label className="field"><span className="field__label">Recompra (pesos)</span><input className="field__input" type="number" min={1} max={1000000} step={1} value={rebuyFee} disabled={!allowRebuy} onChange={(event) => setRebuyFee(Number(event.target.value))} /></label>
             </div>
-            <p className="field__hint">Mínimo 3 jugadores. Al quedar dos, se reparte el pozo completo según sus fichas. La inscripción se cierra al empezar.</p>
+            <p className="field__hint">Hacen falta 3 jugadores para empezar. Cuando queden dos, el pozo se reparte entre ellos según las fichas que tenga cada uno.</p>
 
             <div className="field">
               <span className="field__label">Lugares en la mesa: {maxSeats}</span>
@@ -159,9 +159,7 @@ export function Lobby({
                 onChange={(event) => setMaxSeats(Number(event.target.value))}
               />
               {maxSeats > 8 ? (
-                <span className="field__hint">
-                  Con más de 8 el audio en malla empieza a exigir mucho a cada conexión.
-                </span>
+                <span className="field__hint">Con tantos jugadores la voz puede entrecortarse.</span>
               ) : null}
             </div>
 
@@ -183,7 +181,7 @@ export function Lobby({
                 checked={allowRebuy}
                 onChange={(event) => setAllowRebuy(event.target.checked)}
               />
-              <span>Permitir una sola recarga por jugador al quedarse sin fichas</span>
+              <span>Dejar recomprar una vez a quien se quede sin fichas</span>
             </label>
 
             <div className="lobby__actions">

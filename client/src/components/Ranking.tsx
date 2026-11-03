@@ -96,8 +96,7 @@ export function Ranking({ youId, onClose }: Props) {
               </tbody>
             </table>
             <p className="modal__note">
-              Las fichas son el neto acumulado: lo ganado menos lo apostado, sumando todas las manos
-              de todas las mesas.
+              Las fichas son lo ganado menos lo apostado, sumando todas las manos que jugaste.
             </p>
           </div>
         )}

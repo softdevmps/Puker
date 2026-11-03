@@ -89,7 +89,6 @@ function ChipBetting({ state, onAct }: Props) {
           <button type="button" disabled={pending || !selection.length} onClick={() => setSelection([])}>Limpiar</button>
           {canRaise ? <button type="button" disabled={pending} onClick={() => selectAmount(legal.minRaiseTo - you.bet)}>Mínimo</button> : null}
           {canRaise || legal.callAmount === you.chips ? <button type="button" disabled={pending} onClick={() => selectAmount(you.chips)}>Todo</button> : null}
-          <span>Cambio automático</span>
         </div>
         <p className="chip-betting__hint" aria-live="polite">{hint}</p>
 
