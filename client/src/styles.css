@@ -1800,13 +1800,53 @@ input[type='range'] {
     font-size: 16px;
   }
 
+  /*
+   * La zona de apuestas no le roba alto a la mesa: se reserva siempre el mismo
+   * espacio, le toque a quien le toque. Antes pasaba de 64px a 263px al llegar
+   * tu turno, la mesa se encogía de golpe y el paño quedaba achatado.
+   */
   .actions {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 148px;
     padding: 12px 16px 14px;
   }
+
+  .actions--waiting {
+    min-height: 148px;
+  }
+
+  /* Y con tanto ancho disponible, lo que en el celular va apilado va en fila. */
+  .chip-betting {
+    display: grid;
+    max-width: 1240px;
+    grid-template-columns: minmax(150px, 300px) auto minmax(280px, 560px);
+    grid-template-areas:
+      'cuenta fichas jugadas'
+      'aviso  herramientas jugadas';
+    align-items: center;
+    column-gap: 20px;
+    row-gap: 2px;
+  }
+
+  /* En columna, no uno al lado del otro: así la columna entra en 150px y la
+     fila sigue andando en un escritorio angosto. */
+  .chip-betting__heading { grid-area: cuenta; display: block; }
+  .chip-betting__balance { text-align: left; }
+  .chip-betting__tray { grid-area: fichas; margin: 0; }
+  .chip-betting__tools { grid-area: herramientas; justify-content: center; }
+  .chip-betting__hint { grid-area: aviso; margin: 0; }
 
   .actions__row {
     max-width: 720px;
     margin: 0 auto;
+  }
+
+  .chip-betting .actions__row {
+    grid-area: jugadas;
+    max-width: none;
+    margin: 0;
   }
 
 

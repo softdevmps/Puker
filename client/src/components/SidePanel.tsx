@@ -25,9 +25,11 @@ export function SidePanel({ logs, chat, open, onClose, onSendChat, onChatSeen }:
     if (visible) visible.scrollTop = visible.scrollHeight;
   }, [logs, chat, tab]);
 
-  // Con el chat a la vista, lo que llega ya está leído.
+  // Con el chat a la vista, lo que llega ya está leído. Se mira si el panel está
+  // realmente en pantalla y no si lo abriste: en escritorio está siempre a la
+  // vista y `open` nunca se prende, así que el contador no se apagaba nunca.
   useEffect(() => {
-    if (!open || tab !== 'chat') return;
+    if (tab !== 'chat' || !body.current?.offsetParent) return;
     const last = chat[chat.length - 1];
     if (last) onChatSeen(last.id);
   }, [open, tab, chat, onChatSeen]);
