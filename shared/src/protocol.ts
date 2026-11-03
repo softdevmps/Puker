@@ -194,10 +194,29 @@ export interface HandResult {
   summary: string;
 }
 
+/**
+ * Las ciegas de la ronda en curso. Se duplican cada vez que el botón da la
+ * vuelta completa a la mesa, así la partida no se hace eterna.
+ */
+export interface BlindsView {
+  small: number;
+  big: number;
+  /** 1 es la ronda inicial, con las ciegas de la configuración. */
+  level: number;
+  /** Manos que faltan para que suban, contando la que se juega ahora. */
+  handsLeft: number;
+  /** Cuántas manos dura la ronda: una vuelta entera de la mesa. */
+  handsPerLevel: number;
+  /** Llegaron al tope y ya no suben más. */
+  capped: boolean;
+}
+
 export interface GameState {
   tournament: TournamentView | null;
   roomCode: string;
   settings: TableSettings;
+  /** Ciegas vigentes ahora. Las de `settings` son las de la primera ronda. */
+  blinds: BlindsView;
   phase: Phase;
   handNumber: number;
   /** Solo los asientos ocupados. */

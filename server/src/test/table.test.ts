@@ -503,8 +503,8 @@ test('quien vuelve del descanso paga la ciega grande antes de recibir el botón'
   assert.notEqual(state.dealerSeat, 2, 'el botón no puede caerle al que recién volvió');
   assert.equal(
     state.players.find((p) => p.seat === 2)!.bet,
-    h.table.settings.bigBlind,
-    'entra pagando la ciega grande',
+    h.table.blinds.big,
+    'entra pagando la ciega grande de la ronda en curso',
   );
   assert.equal(h.table.seats[2]!.awaitingBigBlind, false, 'cumplida la ciega, ya puede ser botón');
 
@@ -633,3 +633,80 @@ function mulberry32(seed: number): () => number {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+
+// ----------------------------------------------------- ciegas que suben
+
+/** Juega la mano en curso a puro pasar/igualar y deja lista la siguiente. */
+function playOutHand(h: Harness): void {
+  let guard = 0;
+  while (h.table.isHandLive() && guard++ < 80) {
+    const playerId = h.current();
+    if (!playerId) break;
+    const legal = h.table.legalActions(seatOf(h, playerId))!;
+    h.table.act(playerId, legal.canCheck ? { type: 'check' } : { type: 'call' });
+  }
+  h.table.tick(Date.now() + 60_000);
+}
+
+test('las ciegas se duplican cuando el botón completa la vuelta', () => {
+  const h = makeTable(3, { startingStack: 1_000_000 });
+  h.table.start(h.ids[0]!);
+
+  const repartidores: (number | null)[] = [];
+  const ciegas: string[] = [];
+  for (let mano = 0; mano < 7; mano++) {
+    const state = h.table.getStateFor(h.ids[0]!);
+    repartidores.push(state.dealerSeat);
+    ciegas.push(`${state.blinds.small}/${state.blinds.big}`);
+    playOutHand(h);
+  }
+
+  assert.deepEqual(
+    ciegas,
+    ['10/20', '10/20', '10/20', '20/40', '20/40', '20/40', '40/80'],
+    'suben recién cuando el reparto volvió al primero',
+  );
+  assert.equal(repartidores[0], repartidores[3], 'la mano 4 la reparte el mismo que la 1');
+  assert.equal(repartidores[0], repartidores[6], 'y la 7 también');
+});
+
+test('la cuenta regresiva de las ciegas baja mano a mano y se reinicia al subir', () => {
+  const h = makeTable(4, { startingStack: 1_000_000 });
+  h.table.start(h.ids[0]!);
+
+  const faltan: number[] = [];
+  const niveles: number[] = [];
+  for (let mano = 0; mano < 5; mano++) {
+    const state = h.table.getStateFor(h.ids[0]!);
+    faltan.push(state.blinds.handsLeft);
+    niveles.push(state.blinds.level);
+    playOutHand(h);
+  }
+
+  assert.deepEqual(faltan, [4, 3, 2, 1, 4], 'avisa cuántas manos faltan para la suba');
+  assert.deepEqual(niveles, [1, 1, 1, 1, 2], 'la quinta mano ya es de la segunda ronda');
+  assert.equal(h.table.getStateFor(h.ids[0]!).blinds.handsPerLevel, 4, 'la ronda dura una vuelta');
+});
+
+test('las ciegas dejan de subir al llegar al tope y no desarman la proporción', () => {
+  const h = makeTable(2, { smallBlind: 50_000, bigBlind: 100_000, startingStack: 100_000_000 });
+  h.table.start(h.ids[0]!);
+
+  // Dos jugadores: la vuelta es de dos manos, así que sube rápido.
+  for (let mano = 0; mano < 8; mano++) playOutHand(h);
+
+  const { blinds } = h.table.getStateFor(h.ids[0]!);
+  assert.equal(blinds.small, 100_000, 'la chica se queda en el tope');
+  assert.equal(blinds.big, 200_000, 'la grande también, y sigue siendo el doble');
+  assert.equal(blinds.capped, true, 'avisa que ya no suben más');
+});
+
+test('la subida de ciegas queda anotada en el registro de la mesa', () => {
+  const h = makeTable(3, { startingStack: 1_000_000 });
+  h.table.start(h.ids[0]!);
+  for (let mano = 0; mano < 4; mano++) playOutHand(h);
+
+  const avisos = h.table.drainLog().filter((entry) => entry.text.includes('las ciegas pasan a'));
+  assert.equal(avisos.length, 1, 'se avisa una sola vez por ronda');
+  assert.match(avisos[0]!.text, /20\/40/, 'y dice a cuánto pasaron');
+});

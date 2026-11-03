@@ -50,6 +50,13 @@ export function TopBar({
   const minimumPlayers = state.settings.tournament && !state.tournament ? 3 : 2;
   const enoughPlayers = state.players.filter((p) => p.chips > 0 && p.status !== 'sitting-out').length >= minimumPlayers;
   const entry = state.tournament?.participants.find((p) => p.id === state.youId);
+  // El aviso de las ciegas solo tiene sentido con la partida en marcha.
+  const showBlindCountdown = state.running && !state.blinds.capped && state.handNumber > 0;
+  const blindsTitle = state.blinds.capped
+    ? `Ciegas ${formatChips(state.blinds.small)}/${formatChips(state.blinds.big)}. Ya no suben más.`
+    : state.blinds.handsLeft === 0
+      ? 'Las ciegas se duplican en la próxima mano'
+      : `Las ciegas se duplican en ${state.blinds.handsLeft} ${state.blinds.handsLeft === 1 ? 'mano' : 'manos'}, cuando el reparto dé la vuelta a la mesa`;
   const confirmLeave = () => !entry || !['active', 'rebuy'].includes(entry.status) || window.confirm('¿Retirarte de la partida? Tu aporte queda en el pozo y perdés el derecho a participar del reparto.');
 
   const share = async () => {
@@ -84,9 +91,14 @@ export function TopBar({
               {state.players.length}/{state.settings.maxSeats}
             </span>
             <span className="topbar__dot">·</span>
-            <span title="Ciegas">
-              {formatChips(state.settings.smallBlind)}/{formatChips(state.settings.bigBlind)}
+            <span title={blindsTitle}>
+              {formatChips(state.blinds.small)}/{formatChips(state.blinds.big)}
             </span>
+            {showBlindCountdown ? (
+              <span className="topbar__blinds-up" title={blindsTitle}>
+                {state.blinds.handsLeft === 0 ? 'suben ya' : `faltan ${state.blinds.handsLeft}`}
+              </span>
+            ) : null}
             {state.handNumber > 0 ? (
               <>
                 <span className="topbar__dot">·</span>

@@ -22,6 +22,7 @@ import {
   type Pot,
   type PotView,
   type PublicPlayer,
+  type BlindsView,
   type ShowdownEntry,
   type TableSettings,
   buildPots,
@@ -38,6 +39,10 @@ import { Tournament, type TournamentRecord } from './tournament.js';
 
 /** Pausa entre el final de una mano y el reparto de la siguiente. */
 const HANDOVER_MS = 6000;
+
+/** Tope de las ciegas: el mismo que admite la configuración de la mesa. */
+const MAX_SMALL_BLIND = 100_000;
+const MAX_BIG_BLIND = 200_000;
 /** Pausa extra por cada jugador que muestra cartas en el showdown. */
 const SHOWDOWN_EXTRA_MS = 1200;
 /** Tiempo que se le guarda el asiento a quien se desconecta. */
@@ -131,6 +136,13 @@ export class Table {
   private match: Tournament | null = null;
   onTournamentChange: ((record: TournamentRecord) => void) | null = null;
 
+  /** Ronda de ciegas: la 1 usa las de la configuración, y cada vuelta suma una. */
+  blindLevel = 1;
+  /** Manos ya repartidas en esta ronda. */
+  private handsIntoLevel = 0;
+  /** Cuánto dura la ronda: una vuelta entera, o sea un reparto por jugador. */
+  private handsPerLevel = 0;
+
   /** Se dispara al cerrar cada mano, para persistir el resultado. */
   onHandComplete: ((record: HandRecord) => void) | null = null;
 
@@ -159,6 +171,42 @@ export class Table {
   /** Asientos con alguien conectado ahora mismo. */
   get connectedCount(): number {
     return this.seats.filter((seat) => seat?.connected).length;
+  }
+
+  /**
+   * Las ciegas de la ronda en curso: las de la configuración duplicadas una vez
+   * por cada vuelta del botón. Si al duplicarse se pasarían del tope admitido,
+   * se quedan en la última ronda que entra, así nunca se desarma la proporción
+   * entre la chica y la grande.
+   */
+  get blinds(): { small: number; big: number } {
+    let factor = 2 ** (this.blindLevel - 1);
+    while (factor > 1 && !this.blindsFit(factor)) factor /= 2;
+    return { small: this.settings.smallBlind * factor, big: this.settings.bigBlind * factor };
+  }
+
+  private blindsFit(factor: number): boolean {
+    return this.settings.smallBlind * factor <= MAX_SMALL_BLIND
+      && this.settings.bigBlind * factor <= MAX_BIG_BLIND;
+  }
+
+  /** Ya no pueden subir más sin pasarse del tope. */
+  private get blindsCapped(): boolean {
+    return !this.blindsFit(2 ** this.blindLevel);
+  }
+
+  private blindsView(): BlindsView {
+    const { small, big } = this.blinds;
+    return {
+      small,
+      big,
+      level: this.blindLevel,
+      // Se cuenta la mano que se está jugando: es lo que uno espera leer.
+      // Repartida la última de la ronda, da 0 y la próxima ya sube.
+      handsLeft: Math.max(0, this.handsPerLevel - this.handsIntoLevel + (this.inPlay() ? 1 : 0)),
+      handsPerLevel: this.handsPerLevel,
+      capped: this.blindsCapped,
+    };
   }
 
   /** Primer asiento libre dentro de los habilitados, o null si está llena. */
@@ -409,6 +457,11 @@ export class Table {
     return this.phase !== 'waiting' && this.phase !== 'handover';
   }
 
+  /** Hay una mano repartiéndose de verdad: en el showdown ya está jugada. */
+  private inPlay(): boolean {
+    return this.isHandLive() && this.phase !== 'showdown';
+  }
+
   start(playerId: string): void {
     if (this.hostId && playerId !== this.hostId) throw new Error('Solo el anfitrión puede empezar');
     if (this.running) throw new Error('La partida ya está en marcha');
@@ -458,12 +511,29 @@ export class Table {
       return;
     }
 
+    // Las ciegas se duplican cuando el botón da la vuelta entera: la ronda dura
+    // tantas manos como jugadores haya, así cada uno reparte una vez por ronda.
+    if (this.handsPerLevel === 0) {
+      this.handsPerLevel = eligible.length;
+    } else if (this.handsIntoLevel >= this.handsPerLevel) {
+      this.handsIntoLevel = 0;
+      this.handsPerLevel = eligible.length;
+      if (!this.blindsCapped) {
+        this.blindLevel++;
+        this.addLog(
+          `Dio la vuelta el reparto: las ciegas pasan a ${formatChips(this.blinds.small)}/${formatChips(this.blinds.big)}`,
+          'system',
+        );
+      }
+    }
+    this.handsIntoLevel++;
+
     this.handNumber++;
     this.board = [];
     this.pots = [];
     this.revealed.clear();
     this.currentBet = 0;
-    this.lastRaiseSize = this.settings.bigBlind;
+    this.lastRaiseSize = this.blinds.big;
     this.nextHandAt = null;
     this.deck = shuffle(makeDeck(), secureRandom);
 
@@ -509,15 +579,15 @@ export class Table {
       }
     }
 
-    this.postBlind(sbSeat, this.settings.smallBlind, 'ciega chica');
-    this.postBlind(bbSeat, this.settings.bigBlind, 'ciega grande');
+    this.postBlind(sbSeat, this.blinds.small, 'ciega chica');
+    this.postBlind(bbSeat, this.blinds.big, 'ciega grande');
     // Cumplida la ciega grande, ya puede recibir el botón.
     this.seats[bbSeat]!.awaitingBigBlind = false;
 
     this.currentBet = Math.max(
       this.seats[sbSeat]!.bet,
       this.seats[bbSeat]!.bet,
-      this.settings.bigBlind,
+      this.blinds.big,
     );
     // Las ciegas son forzadas: no cuentan como "ya actuó".
     this.seats[sbSeat]!.hasActed = false;
@@ -646,8 +716,8 @@ export class Table {
    * distinguir un all-in corto de una subida real.
    */
   private fullRaiseTarget(): number {
-    if (this.currentBet === 0) return this.settings.bigBlind;
-    return this.currentBet + Math.max(this.lastRaiseSize, this.settings.bigBlind);
+    if (this.currentBet === 0) return this.blinds.big;
+    return this.currentBet + Math.max(this.lastRaiseSize, this.blinds.big);
   }
 
   /**
@@ -729,7 +799,7 @@ export class Table {
         this.currentBet = Math.max(this.currentBet, seat.bet);
 
         if (isFullRaise) {
-          this.lastRaiseSize = Math.max(this.currentBet - previousBet, this.settings.bigBlind);
+          this.lastRaiseSize = Math.max(this.currentBet - previousBet, this.blinds.big);
           this.reopened = true;
           // Una subida completa obliga a todos los demás a volver a decidir.
           for (const other of this.activeSeats()) {
@@ -871,7 +941,7 @@ export class Table {
       seat.hasActed = false;
     }
     this.currentBet = 0;
-    this.lastRaiseSize = this.settings.bigBlind;
+    this.lastRaiseSize = this.blinds.big;
     this.reopened = true;
     this.pots = this.snapshotPots();
   }
@@ -1287,6 +1357,7 @@ export class Table {
       currentBet: this.currentBet,
       dealerSeat: this.button,
       turnSeat: this.turn,
+      blinds: this.blindsView(),
       turnEndsAt: this.turnEndsAt,
       serverNow: Date.now(),
       youSeat,

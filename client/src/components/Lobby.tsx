@@ -140,7 +140,7 @@ export function Lobby({
             <div className="field">
               <span className="field__label">Cada uno arranca con 29.000 en fichas</span>
               <ChipSet />
-              <span className="field__hint">Ciega chica: $50 · Ciega grande: $100</span>
+              <span className="field__hint">Ciegas: $50 y $100. Se duplican cada vez que el reparto da la vuelta a la mesa.</span>
             </div>
 
             <div className="tournament-fees">
