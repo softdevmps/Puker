@@ -5,20 +5,24 @@
    ============================================================ */
 
 :root {
-  --bg: #0a1310;
-  --bg-soft: #112019;
-  --felt: #146b47;
-  --felt-dark: #0d4a31;
-  --felt-rail: #5b3a21;
-  --surface: #16261f;
-  --surface-2: #1d3228;
-  --line: #2c4538;
+  --bg: #070f0d;
+  --bg-soft: #0e1b16;
+  --felt: #12714b;
+  --felt-dark: #063926;
+  --felt-rail: #4a2f1c;
+  --surface: #13201b;
+  --surface-2: #1b2c25;
+  --line: #2b4237;
   --text: #eaf3ee;
-  --text-dim: #9db3a8;
+  --text-dim: #93aaa0;
   --gold: #e8bb5a;
   --red: #e0564f;
   --green: #4cc38a;
   --blue: #5aa9e8;
+
+  /* Inter para la interfaz; Outfit para marca, fichas y cifras. */
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Outfit', 'Inter', system-ui, sans-serif;
 
   --card-radius: 5px;
   --radius: 12px;
@@ -45,9 +49,9 @@ body {
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  font-family: var(--font-ui);
   font-size: 15px;
-  line-height: 1.4;
+  line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
@@ -105,9 +109,17 @@ input[type='range'] {
 }
 
 .btn--primary {
-  background: linear-gradient(180deg, #2f9f6b, #1d7a4f);
-  border-color: #2aa872;
+  background: linear-gradient(180deg, #35b579 0%, #1d7a4f 100%);
+  border-color: #38c084;
+  box-shadow:
+    0 6px 18px rgba(29, 122, 79, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
   color: #fff;
+  letter-spacing: 0.1px;
+}
+
+.btn--primary:hover:not(:disabled) {
+  filter: brightness(1.07);
 }
 
 .btn--ghost {
@@ -181,13 +193,27 @@ input[type='range'] {
 }
 
 .lobby__card {
+  position: relative;
   width: 100%;
   max-width: 420px;
-  padding: 24px 20px;
-  border: 1px solid var(--line);
+  padding: 28px 22px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: var(--radius-lg);
-  background: var(--surface);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  background: linear-gradient(180deg, #1a2c24 0%, var(--surface) 55%);
+  box-shadow:
+    0 30px 70px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* Filo dorado arriba de la tarjeta: la despega del fondo. */
+.lobby__card::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 14%;
+  right: 14%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(232, 187, 90, 0.7), transparent);
 }
 
 .lobby__header {
@@ -197,16 +223,26 @@ input[type='range'] {
 
 .lobby__title {
   margin: 0;
-  font-size: 34px;
-  letter-spacing: -0.5px;
+  background: linear-gradient(180deg, #ffffff 25%, #bfd9cc 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  font-family: var(--font-display);
+  font-size: 46px;
+  font-weight: 800;
+  letter-spacing: -1.6px;
+  line-height: 1.05;
 }
 
 .lobby__suits {
   display: block;
-  margin-top: 4px;
-  font-size: 15px;
-  letter-spacing: 6px;
+  margin-top: 8px;
+  font-size: 13px;
+  letter-spacing: 9px;
+  /* El espaciado deja un hueco a la derecha: se compensa para centrarlos. */
+  text-indent: 9px;
   color: var(--gold);
+  opacity: 0.85;
 }
 
 .lobby__subtitle {
@@ -455,21 +491,64 @@ input[type='range'] {
 .table__opponents { display: contents; }
 .seat-slot__bet { display: none; }
 
+/*
+ * La baranda: madera oscura con un brillo especular arriba y un filo dorado
+ * que la separa del paño. Sin el filo, la madera y el verde se empastan.
+ */
 .felt {
   position: absolute;
   inset: 4% 4%;
   border-radius: 50%;
-  background: var(--felt-rail);
-  background-image: linear-gradient(180deg, #6b4526, #3f2816);
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55), inset 0 2px 6px rgba(255, 255, 255, 0.12);
+  background:
+    linear-gradient(180deg, #7a4f2c 0%, #5a3820 38%, #3a2414 100%);
+  box-shadow:
+    0 26px 60px rgba(0, 0, 0, 0.6),
+    inset 0 3px 10px rgba(255, 222, 180, 0.22),
+    inset 0 -4px 12px rgba(0, 0, 0, 0.5);
 }
 
+/* `inherit` porque en celular el paño no es una elipse sino un rectángulo
+   redondeado: con un radio fijo el filo quedaba cruzando la madera. */
+.felt::after {
+  content: '';
+  position: absolute;
+  inset: 9px;
+  border-radius: inherit;
+  box-shadow: 0 0 0 1px rgba(232, 187, 90, 0.3);
+  pointer-events: none;
+}
+
+/*
+ * El paño: degradé de luz cenital + un tramado diagonal muy tenue que simula
+ * la tela. Plano se veía como un bloque de color.
+ */
 .felt__inner {
   position: absolute;
-  inset: 11px;
+  inset: 12px;
   border-radius: 50%;
-  background: radial-gradient(70% 70% at 50% 38%, #1a8257 0%, var(--felt) 45%, var(--felt-dark) 100%);
-  box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.45);
+  background:
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.018) 0 2px, transparent 2px 4px),
+    repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0.022) 0 2px, transparent 2px 4px),
+    radial-gradient(68% 62% at 50% 32%, #1a9160 0%, var(--felt) 46%, var(--felt-dark) 100%);
+  box-shadow:
+    inset 0 0 70px rgba(0, 0, 0, 0.5),
+    inset 0 2px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* Escudo de la casa, como en una mesa real: llena el centro vacío cuando hay
+   pocos jugadores sin competir con las cartas, que van por encima. */
+.felt__inner::after {
+  content: '♠ ♥ ♦ ♣';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  color: rgba(255, 255, 255, 0.07);
+  font-size: clamp(34px, 11vw, 70px);
+  letter-spacing: 0.2em;
+  text-indent: 0.2em;
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
 }
 
 .center {
@@ -488,30 +567,41 @@ input[type='range'] {
 
 .center__pot {
   display: flex;
-  gap: 7px;
+  gap: 8px;
   align-items: baseline;
-  padding: 4px 14px;
-  border: 1px solid rgba(232, 187, 90, 0.4);
+  padding: 5px 16px;
+  border: 1px solid rgba(232, 187, 90, 0.45);
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.42);
+  background: rgba(0, 0, 0, 0.55);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(2px);
 }
 
 .center__pot-label {
-  color: var(--text-dim);
-  font-size: 11px;
+  color: rgba(232, 187, 90, 0.75);
+  font-size: 10px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 1.4px;
 }
 
 .center__pot strong {
   color: var(--gold);
-  font-size: 18px;
+  font-family: var(--font-display);
+  font-size: 21px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.3px;
 }
 
 .board {
   display: flex;
-  gap: 4px;
+  gap: 5px;
   justify-content: center;
+  padding: 7px 9px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.16);
+  box-shadow: inset 0 1px 10px rgba(0, 0, 0, 0.3);
 }
 
 .center__sidepots {
@@ -615,10 +705,13 @@ input[type='range'] {
   border: 2px solid #f7f5ef;
 }
 
+/* Hueco: un rebaje en el paño, no un recuadro punteado de wireframe. */
 .card--slot {
-  background: rgba(0, 0, 0, 0.22);
-  border: 1px dashed rgba(255, 255, 255, 0.16);
-  box-shadow: none;
+  background: rgba(0, 0, 0, 0.2);
+  border: 0;
+  box-shadow:
+    inset 0 2px 5px rgba(0, 0, 0, 0.45),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.05);
   animation: none;
 }
 
@@ -670,11 +763,13 @@ input[type='range'] {
 .seat__body {
   position: relative;
   width: 100%;
-  padding: 6px 6px 5px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: rgba(10, 20, 16, 0.9);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  padding: 7px 7px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(20, 36, 29, 0.95), rgba(8, 17, 13, 0.95));
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
 }
 
 .seat__head {
@@ -686,9 +781,10 @@ input[type='range'] {
 
 .seat__name {
   overflow: hidden;
-  max-width: 62px;
+  max-width: 78px;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
+  letter-spacing: -0.1px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -698,24 +794,41 @@ input[type='range'] {
   font-size: 10px;
 }
 
+/*
+ * Va pegado a la esquina del panel, fuera de la fila del nombre: ahí dentro
+ * le robaba 20px al nombre y lo cortaba justo en los asientos con botón.
+ */
 .seat__dealer {
+  position: absolute;
+  top: -7px;
+  right: -5px;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 17px;
+  height: 17px;
   border-radius: 50%;
-  background: #f7f5ef;
-  color: #15181a;
-  font-size: 10px;
+  /*
+   * El botón del repartidor no puede parecerse al avatar: con un nombre que
+   * empieza con D quedaban dos círculos con la misma letra, uno al lado del
+   * otro. Este es dorado, más chico y con anillo.
+   */
+  background: linear-gradient(180deg, #f3d079, var(--gold));
+  color: #2a1e08;
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.55), 0 1px 3px rgba(0, 0, 0, 0.5);
+  font-family: var(--font-display);
+  font-size: 9px;
   font-weight: 800;
 }
 
 .seat__chips {
   color: var(--gold);
-  font-size: 14px;
+  font-family: var(--font-display);
+  font-size: 15px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.2px;
 }
 
 .seat__hand {
@@ -812,19 +925,25 @@ input[type='range'] {
   animation: rise 1.2s ease forwards;
 }
 
+/* Lugar libre: un rebaje discreto en el paño, no un recuadro de wireframe. */
 .seat--empty {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 78px;
-  height: 46px;
-  border: 1px dashed rgba(255, 255, 255, 0.18);
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.22);
+  height: 44px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.2);
+  box-shadow:
+    inset 0 2px 6px rgba(0, 0, 0, 0.4),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
 }
 
 .seat--clickable {
-  border-color: rgba(232, 187, 90, 0.5);
+  box-shadow:
+    inset 0 0 0 1px rgba(232, 187, 90, 0.45),
+    0 3px 10px rgba(0, 0, 0, 0.35);
   color: var(--gold);
 }
 
@@ -890,15 +1009,12 @@ input[type='range'] {
 .bet-chip__tokens .poker-chip + .poker-chip { margin-left: -7px; }
 /* ----------------------------------------------------- acciones */
 
-.seat-slot--hero { top: auto !important; bottom: 8px; transform: translateX(-50%); }
-.table:has(.seat-slot--hero) .center { top: 42%; }
-.bet-chip--hero { top: auto !important; left: calc(50% - 96px) !important; bottom: 190px; transform: translateX(-50%); }
-.seat-slot--hero .seat--hero { width: 216px; }
-.seat__inventory-label { font-size: 10px; color: var(--text-dim); }
-.chip-set--compact { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; margin: 4px 0; }
-.chip-set--compact .chip-set__item { flex-direction: column; gap: 2px; }
-.chip-set--compact .poker-chip { width: 29px; height: 29px; border-width: 2px; font-size: 7px; }
-.chip-set__quantity { font-size: 10px; font-variant-numeric: tabular-nums; }
+.seat-slot--hero { top: auto !important; bottom: 10px; transform: translateX(-50%); }
+.table:has(.seat-slot--hero) .center { top: 40%; }
+.bet-chip--hero { top: auto !important; left: calc(50% - 104px) !important; bottom: 150px; transform: translateX(-50%); }
+.seat-slot--hero .seat--hero { width: 184px; }
+/* Tus cartas son lo que más mirás: en escritorio van bien grandes. */
+.seat-slot--hero .seat__cards .card { --card-w: 58px; --card-h: 82px; }
 
 .chip-betting { max-width: 720px; margin: 0 auto; }
 .chip-betting__heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
@@ -1523,7 +1639,8 @@ input[type='range'] {
   .table__opponents .seat__hand { display: block; font-size: 9px; }
   .table--playing .seat-slot--empty { display: none; }
   .table .center { position: relative; order: 1; top: auto !important; left: auto; transform: none; flex: 1 0 auto; justify-content: center; width: 100%; min-height: 104px; padding: 8px 0; gap: 6px; }
-  .table .board .card { --card-w: clamp(34px, 10vw, 44px); --card-h: calc(var(--card-w) * 1.42); }
+  .table .board .card { --card-w: clamp(40px, 12.2vw, 54px); --card-h: calc(var(--card-w) * 1.42); }
+  .table .board { gap: 4px; padding: 8px; }
   .table .center__result, .table .center__waiting { font-size: 11px; border-radius: 12px; }
   .table .center__sidepots { gap: 3px; }
   .table .center__sidepot { padding: 2px 5px; }
@@ -1532,13 +1649,10 @@ input[type='range'] {
   .table > .seat-slot--hero .seat__cards { margin: 0; min-height: 0; }
   .table > .seat-slot--hero .seat__cards:empty { display: none; }
   .table > .seat-slot--hero .seat__cards:empty + .seat__body { grid-column: 1 / -1; }
-  .table > .seat-slot--hero .seat__cards .card { --card-w: 36px; --card-h: 52px; }
+  .table > .seat-slot--hero .seat__cards .card { --card-w: 46px; --card-h: 66px; }
   .table > .seat-slot--hero .seat__body { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 6px; min-width: 0; padding: 5px; }
   .table > .seat-slot--hero .seat__head { min-width: 0; justify-content: flex-start; }
-  .table > .seat-slot--hero .seat__chips { font-size: 13px; }
-  .table > .seat-slot--hero .seat__inventory { grid-column: 1 / -1; }
-  .table > .seat-slot--hero .seat__inventory-label { display: block; font-size: 9px; line-height: 12px; }
-  .table > .seat-slot--hero .chip-set--compact { margin: 2px 0; }
+  .table > .seat-slot--hero .seat__chips { font-size: 17px; }
   .table > .seat-slot--hero .seat__hand { display: block; text-align: left; }
   .table > .seat-slot--hero .seat__status { min-width: 0; text-align: right; }
   .table > .seat-slot--hero .seat__status:nth-child(4) { grid-column: 1 / -1; }
@@ -1560,9 +1674,7 @@ input[type='range'] {
 }
 
 @media (max-width: 359px) {
-  .table > .seat-slot--hero .seat__cards .card { --card-w: 30px; --card-h: 44px; }
-  .table > .seat-slot--hero .chip-set--compact { gap: 2px; }
-  .table > .seat-slot--hero .chip-set--compact .poker-chip { width: 25px; height: 25px; }
+  .table > .seat-slot--hero .seat__cards .card { --card-w: 38px; --card-h: 55px; }
 }
 
 @media (min-width: 900px) {
@@ -1587,7 +1699,7 @@ input[type='range'] {
   }
 
   .seat {
-    width: 118px;
+    width: 128px;
   }
 
   .seat--hero {
@@ -1595,7 +1707,7 @@ input[type='range'] {
   }
 
   .seat__name {
-    max-width: 90px;
+    max-width: 102px;
     font-size: 13px;
   }
 

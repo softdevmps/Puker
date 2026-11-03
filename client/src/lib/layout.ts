@@ -22,16 +22,19 @@ function onEllipse(displayIndex: number, total: number, radiusX: number, radiusY
 /**
  * Dónde va el panel del jugador.
  *
- * El radio horizontal es chico a propósito: con 43% los asientos laterales se
- * cortaban contra el borde de la pantalla en un celular de 390px de ancho.
+ * Solo aplica de 900px para arriba: en celular los asientos se acomodan en una
+ * grilla y estas coordenadas quedan anuladas por CSS.
+ *
+ * El radio horizontal no puede pasar de ~37%: el panel mide 128px, así que con
+ * 42% los asientos de los costados se salían del paño sobre el fondo oscuro.
  */
 export function seatPosition(displayIndex: number, total: number): Point {
-  return onEllipse(displayIndex, total, 37, 38);
+  return onEllipse(displayIndex, total, 37, 39);
 }
 
-/** Dónde van sus fichas apostadas: más cerca del centro. */
+/** Dónde van sus fichas apostadas: entre el jugador y el centro. */
 export function betPosition(displayIndex: number, total: number): Point {
-  return onEllipse(displayIndex, total, 25, 23);
+  return onEllipse(displayIndex, total, 27, 24);
 }
 
 /**
