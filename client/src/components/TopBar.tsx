@@ -121,7 +121,10 @@ export function TopBar({
           </button>
         ) : null}
 
-        <VoiceBar voice={voice} />
+        <VoiceBar
+          voice={voice}
+          nameOf={(playerId) => state.players.find((player) => player.id === playerId)?.name ?? 'alguien'}
+        />
 
         <button
           type="button"

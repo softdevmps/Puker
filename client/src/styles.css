@@ -1654,6 +1654,17 @@ input[type='range'] {
   text-align: center;
 }
 
+/* A cuántos del audio no se los está alcanzando. */
+.voice__lost {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(214, 90, 74, 0.22);
+  color: #f0a79c;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 /* Contador de mensajes sin leer sobre el botón del panel. */
 .btn__badge {
   position: absolute;

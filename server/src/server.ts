@@ -63,6 +63,8 @@ interface SocketData {
   player?: PlayerIdentity;
   roomCode?: string;
   lastChatAt?: number;
+  /** Cuándo entró al audio por esta conexión. Ver `voice:signal`. */
+  voiceJoinedAt?: number;
 }
 
 type AppSocket = Socket<
@@ -504,6 +506,7 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
           });
 
         voice.join(code, player.playerId);
+        socket.data.voiceJoinedAt = Date.now();
         socket.to(roomKey(code)).emit('voice:peer-joined', {
           playerId: player.playerId,
           name: player.name,
@@ -536,12 +539,18 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
           throw new Error('Ese jugador no está en la conversación');
         }
 
+        // A una sola conexión, la última que entró al audio. Con la web abierta
+        // en dos lugares, las dos contestaban la misma oferta: la negociación
+        // se enredaba y el que hablaba se escuchaba a sí mismo con retardo.
+        let target: AppSocket | undefined;
         for (const socketId of io.sockets.adapter.rooms.get(roomKey(code)) ?? []) {
           const other = io.sockets.sockets.get(socketId) as AppSocket | undefined;
-          if (other?.data.player?.playerId === to) {
-            other.emit('voice:signal', { from: player.playerId, data: payload.data });
+          if (other?.data.player?.playerId !== to) continue;
+          if (!target || (other.data.voiceJoinedAt ?? 0) >= (target.data.voiceJoinedAt ?? 0)) {
+            target = other;
           }
         }
+        target?.emit('voice:signal', { from: player.playerId, data: payload.data });
         ack(ok(undefined));
       } catch (error) {
         ack(fail(error));

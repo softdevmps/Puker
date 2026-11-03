@@ -43,7 +43,14 @@ interface PeerConnection {
   stream: MediaStream;
   analyser: AnalyserNode | null;
   name: string;
+  /** Fuimos nosotros los que ofrecimos: nos toca a nosotros reintentar. */
+  initiator: boolean;
+  /** Reintentos de rehacer el camino antes de dar el par por perdido. */
+  retries: number;
 }
+
+/** Cuántas veces se rehace el camino con un par antes de rendirse. */
+const ICE_RETRIES = 2;
 
 export interface VoiceApi {
   /** El micrófono está activo y estás en la conversación. */
@@ -55,6 +62,8 @@ export interface VoiceApi {
   speaking: Set<string>;
   /** playerIds conectados por voz, incluido el tuyo. */
   participants: Set<string>;
+  /** Están en el audio pero no se pudo armar el camino hasta ellos. */
+  unreachable: Set<string>;
   error: string | null;
   start(): Promise<void>;
   stop(): void;
@@ -75,6 +84,7 @@ export function useVoice(options: {
   const [connecting, setConnecting] = useState(false);
   const [speaking, setSpeaking] = useState<Set<string>>(new Set());
   const [participants, setParticipants] = useState<Set<string>>(new Set());
+  const [unreachable, setUnreachable] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
   const localStream = useRef<MediaStream | null>(null);
@@ -152,7 +162,9 @@ export function useVoice(options: {
       const stream = new MediaStream();
       audio.srcObject = stream;
 
-      const peer: PeerConnection = { pc, audio, stream, analyser: null, name: nameRef.current(playerId) };
+      const peer: PeerConnection = {
+        pc, audio, stream, analyser: null, name: nameRef.current(playerId), initiator: false, retries: 0,
+      };
       peers.current.set(playerId, peer);
 
       for (const track of localStream.current?.getTracks() ?? []) {
@@ -180,8 +192,43 @@ export function useVoice(options: {
         peer.analyser = makeAnalyser(stream);
       };
 
+      /** Rehace el camino con este par sin tirar la conexión (ICE restart). */
+      const retryPath = async () => {
+        if (!socket) return;
+        try {
+          const offer = await pc.createOffer({ iceRestart: true });
+          await pc.setLocalDescription(offer);
+          await request(socket, 'voice:signal', {
+            to: playerId,
+            data: { kind: 'offer', sdp: pc.localDescription, restart: true },
+          });
+        } catch {
+          dropPeer(playerId);
+        }
+      };
+
       pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'connected') {
+          peer.retries = 0;
+          setUnreachable((prev) => {
+            if (!prev.has(playerId)) return prev;
+            const next = new Set(prev);
+            next.delete(playerId);
+            return next;
+          });
+          return;
+        }
         if (pc.connectionState !== 'failed') return;
+
+        // Un corte puede ser pasajero (saltar de wifi a datos, por ejemplo): se
+        // reintenta el camino antes de dar el par por perdido. Reintenta quien
+        // ofreció, para que los dos lados no se pisen.
+        if (peer.initiator && peer.retries < ICE_RETRIES) {
+          peer.retries++;
+          void retryPath();
+          return;
+        }
+
         // Casi siempre es NAT estricto (datos móviles) sin TURN disponible.
         notify(
           'error',
@@ -189,6 +236,7 @@ export function useVoice(options: {
             ? `Se cortó el audio con ${peer.name}`
             : `No se pudo conectar el audio con ${peer.name}: falta un servidor TURN.`,
         );
+        setUnreachable((prev) => new Set(prev).add(playerId));
         dropPeer(playerId);
       };
 
@@ -208,6 +256,7 @@ export function useVoice(options: {
       for (const remote of existing) {
         const connection = ensurePeer(remote.playerId);
         connection.name = remote.name;
+        connection.initiator = true;
         const offer = await connection.pc.createOffer();
         await connection.pc.setLocalDescription(offer);
         await request(socket, 'voice:signal', {
@@ -229,6 +278,7 @@ export function useVoice(options: {
     setMuted(false);
     setSpeaking(new Set());
     setParticipants(new Set());
+    setUnreachable(new Set());
     if (socket) void request(socket, 'voice:leave').catch(() => {});
   }, [socket, dropPeer]);
 
@@ -287,6 +337,7 @@ export function useVoice(options: {
     if (!socket || !activeRef.current) return;
     for (const playerId of [...peers.current.keys()]) dropPeer(playerId);
     setParticipants(new Set([youId]));
+    setUnreachable(new Set());
 
     // La sala se rearma un instante después de reconectar, así que se reintenta
     // hasta que el servidor vuelva a reconocernos adentro.
@@ -369,15 +420,16 @@ export function useVoice(options: {
     const onSignal = async ({ from, data }: { from: string; data: unknown }) => {
       if (!activeRef.current) return;
       const message = data as
-        | { kind: 'offer'; sdp: RTCSessionDescriptionInit }
+        | { kind: 'offer'; sdp: RTCSessionDescriptionInit; restart?: boolean }
         | { kind: 'answer'; sdp: RTCSessionDescriptionInit }
         | { kind: 'ice'; candidate: RTCIceCandidateInit };
 
       try {
         if (message.kind === 'offer') {
-          // Solo se ofrece al entrar: si ya había conexión con ese par, es que
-          // volvió de una caída. Se tira la vieja antes de rehacerla.
-          if (peers.current.has(from)) dropPeer(from);
+          // Con `restart` es el mismo par rehaciendo el camino: se conserva la
+          // conexión y se renegocia. Sin `restart` es alguien que entra o que
+          // volvió de una caída, y ahí la conexión vieja se tira.
+          if (peers.current.has(from) && !message.restart) dropPeer(from);
           const connection = ensurePeer(from);
           await connection.pc.setRemoteDescription(message.sdp);
           const answer = await connection.pc.createAnswer();
@@ -433,6 +485,7 @@ export function useVoice(options: {
     connecting,
     speaking,
     participants,
+    unreachable,
     error,
     start,
     stop,

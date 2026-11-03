@@ -2,14 +2,17 @@ import type { VoiceApi } from '../lib/useVoice';
 
 interface Props {
   voice: VoiceApi;
+  /** Para nombrar en el aviso a quién no se está llegando. */
+  nameOf(playerId: string): string;
 }
 
 /**
  * Control del audio. Dos botones: entrar/salir de la conversación y silenciar.
  * El indicador de quién habla se dibuja sobre cada asiento, no acá.
  */
-export function VoiceBar({ voice }: Props) {
+export function VoiceBar({ voice, nameOf }: Props) {
   const others = Math.max(0, voice.participants.size - (voice.active ? 1 : 0));
+  const lost = [...voice.unreachable].map(nameOf);
 
   if (!voice.active) {
     return (
@@ -43,7 +46,17 @@ export function VoiceBar({ voice }: Props) {
       >
         ✕
       </button>
-      {others > 0 ? <span className="voice__count">{others}</span> : null}
+      {others > 0 ? (
+        <span className="voice__count" title={`${others} en el audio`}>
+          {others}
+        </span>
+      ) : null}
+      {/* Sin esto no hay forma de saber que a alguien no lo estás escuchando. */}
+      {lost.length > 0 ? (
+        <span className="voice__lost" title={`No se pudo armar el audio con ${lost.join(', ')}`}>
+          ⚠ {lost.length}
+        </span>
+      ) : null}
     </div>
   );
 }
