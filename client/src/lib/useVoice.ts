@@ -60,6 +60,10 @@ interface PeerConnection {
 /** Cuántas veces se rehace el camino con un par antes de rendirse. */
 const ICE_RETRIES = 2;
 
+/** El sistema operativo o un botón del auricular lo tienen mudo. */
+const MUTED_BY_SYSTEM =
+  'Tu micrófono está silenciado por el sistema: fijate el botón de mute del auricular, o Configuración de Windows → Sonido → Entrada. Nadie te escucha hasta destrabarlo.';
+
 export interface VoiceApi {
   /** El micrófono está activo y estás en la conversación. */
   active: boolean;
@@ -361,6 +365,20 @@ export function useVoice(options: {
           notify('error', message);
           stop();
         };
+        // `muted` en la pista no es el silencio de Puker: es el sistema o un
+        // botón del auricular. El navegador la da por viva y no entra nada.
+        track.onmute = () => {
+          setError(MUTED_BY_SYSTEM);
+          notify('error', MUTED_BY_SYSTEM);
+        };
+        track.onunmute = () => {
+          setError(null);
+          notify('success', 'Volvió tu micrófono: ya te escuchan.');
+        };
+        if (track.muted) {
+          setError(MUTED_BY_SYSTEM);
+          notify('error', MUTED_BY_SYSTEM);
+        }
       }
 
       iceConfig.current = await request<IceConfig>(socket, 'voice:config');
@@ -437,6 +455,9 @@ export function useVoice(options: {
     let own: MediaStream | null = null;
     try {
       const stream = localStream.current ?? (own = await navigator.mediaDevices.getUserMedia({ audio: true }));
+      if (stream.getAudioTracks().some((track) => track.muted)) {
+        return { ok: false, message: MUTED_BY_SYSTEM };
+      }
       const analyser = makeAnalyser(stream);
       if (!analyser) {
         return { ok: true, message: 'El micrófono abre bien, pero este navegador no deja medir el nivel.' };
@@ -516,7 +537,9 @@ export function useVoice(options: {
         quietSince.current = now;
       } else if (!warnedQuiet.current && now - quietSince.current > DEAD_MIC_MS) {
         warnedQuiet.current = true;
-        const message = 'Hace rato que no entra nada por tu micrófono: nadie te está escuchando. Probalo desde el menú ⋯ → Probar mi micrófono.';
+        const message = localStream.current?.getAudioTracks().some((track) => track.muted)
+          ? MUTED_BY_SYSTEM
+          : 'Hace rato que no entra nada por tu micrófono: nadie te está escuchando. Probalo desde el menú ⋯ → Probar mi micrófono.';
         setError(message);
         notify('error', message);
       }
