@@ -59,6 +59,8 @@ body {
 
 #root {
   height: 100%;
+  /* En Android la barra del navegador se come alto real: `dvh` mide el visible. */
+  height: 100dvh;
 }
 
 button {
@@ -70,6 +72,9 @@ button {
 input[type='range'] {
   accent-color: var(--gold);
   width: 100%;
+  /* Los controles ocupan todo el ancho: sin esto, arrastrar para abajo sobre uno
+     movía el valor en vez de scrollear y la pantalla parecía trabada. */
+  touch-action: pan-y;
 }
 
 /* ----------------------------------------------------- botones */
@@ -180,13 +185,24 @@ input[type='range'] {
 
 /* ----------------------------------------------------- lobby */
 
+/*
+ * Esta pantalla scrollea entera. Con `min-height` la caja crecía con el
+ * contenido en vez de scrollear, y lo que sobraba lo cortaba el `overflow:
+ * hidden` del body: en pantallas cortas (o con la letra del sistema agrandada)
+ * no había manera de llegar al botón de "Crear mesa".
+ *
+ * Tampoco se centra con `align-items: center`: centrado así, lo que no entra se
+ * parte arriba y abajo y la parte de arriba queda inalcanzable. El `margin:
+ * auto` de la tarjeta centra cuando sobra espacio y se anula cuando falta.
+ */
 .lobby {
   display: flex;
-  align-items: center;
   justify-content: center;
-  min-height: 100%;
+  height: 100%;
   padding: calc(16px + var(--safe-top)) 16px calc(16px + var(--safe-bottom));
   overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
   background:
     radial-gradient(1200px 600px at 50% -10%, #174833 0%, transparent 60%),
     var(--bg);
@@ -196,6 +212,7 @@ input[type='range'] {
   position: relative;
   width: 100%;
   max-width: 420px;
+  margin: auto;
   padding: 28px 22px;
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: var(--radius-lg);
@@ -356,6 +373,7 @@ input[type='range'] {
 .app {
   display: flex;
   flex-direction: column;
+  height: 100vh;
   height: 100dvh;
   padding-top: var(--safe-top);
   padding-bottom: var(--safe-bottom);
@@ -1398,6 +1416,9 @@ input[type='range'] {
   display: flex;
   flex-direction: column;
   width: min(560px, 100%);
+  /* Sin respaldo en `vh`, un navegador sin `dvh` descarta la regla entera y la
+     ventana crece sin límite: el contenido se corta y no scrollea nada. */
+  max-height: min(80vh, 720px);
   max-height: min(80dvh, 720px);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
