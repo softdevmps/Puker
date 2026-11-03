@@ -11,7 +11,17 @@ console.log(`\n  Puker escuchando en http://localhost:${port}`);
 if (!server.servingClient) {
   console.log('  Cliente en desarrollo: http://localhost:5173');
 }
-console.log(`  Base de datos: ${config.databaseFile}`);
+console.log(
+  `  Base de datos: ${config.databaseFile} · ${server.store.countUsers()} cuentas${
+    server.store.isNew ? ' (creada recién)' : ''
+  }`,
+);
+if (config.isProduction && server.store.isNew) {
+  console.warn(
+    '  ATENCIÓN: la base arrancó vacía. Si pasa en cada despliegue, DATABASE_FILE no está\n' +
+      '  sobre un disco persistente y las cuentas se pierden cada vez que publicás.',
+  );
+}
 console.log(`  URL pública: ${config.publicUrl}`);
 if (config.isProduction && !pinnedOrigin) {
   console.warn(

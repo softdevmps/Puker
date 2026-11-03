@@ -38,8 +38,24 @@ export const config = {
   host: env('HOST', '0.0.0.0'),
   publicUrl,
 
-  /** Archivo de la base. `:memory:` en los tests. */
-  databaseFile: resolve(env('DATABASE_FILE', './data/puker.db')),
+  /**
+   * Archivo de la base. `:memory:` en los tests.
+   *
+   * En producción es obligatorio indicarlo: el default cae dentro del directorio
+   * del despliegue, que se borra entero en cada deploy, y como la base se crea
+   * sola al arrancar las cuentas se perderían en silencio.
+   */
+  databaseFile: (() => {
+    const file = env('DATABASE_FILE');
+    if (file) return resolve(file);
+    if (isProduction) {
+      throw new Error(
+        'Falta DATABASE_FILE. Apuntalo a un disco persistente (en Render, por ejemplo ' +
+          '/var/data/puker.db) o las cuentas se borran en cada despliegue.',
+      );
+    }
+    return resolve('./data/puker.db');
+  })(),
 
   /**
    * Clave para firmar cosas. En producción es obligatoria: si cambia, se

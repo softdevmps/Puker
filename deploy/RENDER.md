@@ -20,6 +20,28 @@ usa el entorno Node de Render, no el Dockerfile ni Docker Compose.
 6. Cuando termine la prueba, reiniciar el servicio y comprobar que el perfil
    y el historial sobreviven. Verificar también `/api/health`.
 
+## Si las cuentas se borran en cada despliegue
+
+Quiere decir que el archivo SQLite no está sobre el disco persistente, así que
+se va junto con el contenedor anterior. En el log de arranque se ve:
+
+    Base de datos: /var/data/puker.db · 7 cuentas
+
+Si en cada despliegue dice `0 cuentas (creada recién)`, revisar en este orden:
+
+1. **Cómo se creó el servicio.** Si se hizo con **New → Web Service** en vez de
+   **New → Blueprint**, Render ignora `render.yaml` por completo: no adjunta el
+   disco ni define las variables. Hay que crearlo como Blueprint, o agregar a
+   mano el disco en `/var/data` y la variable `DATABASE_FILE`.
+2. **Que el disco exista.** En el servicio, pestaña *Disks*: tiene que haber uno
+   montado en `/var/data`. El plan Free no admite discos.
+3. **Que `DATABASE_FILE` apunte adentro del disco**, o sea `/var/data/puker.db`.
+   Desde esta versión el servidor no arranca en producción si falta la variable,
+   justamente para no borrar cuentas sin avisar.
+
+Recrear el servicio crea un disco nuevo y vacío: para conservar las cuentas hay
+que bajar el archivo antes (*Shell* del servicio) o volver a empezar de cero.
+
 El plan Free no sirve para conservar esta SQLite: no admite discos persistentes.
 No agregar PostgreSQL: esta configuración ya guarda cuentas, fotos e historial
 en el disco adjunto. Mantener una sola instancia.

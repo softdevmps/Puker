@@ -9,7 +9,7 @@
  */
 
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { TournamentRecord } from '../tournament.js';
@@ -143,7 +143,14 @@ const MIGRATIONS: { name: string; sql: string }[] = [
 export class Store {
   private readonly db: DatabaseSync;
 
+  /**
+   * La base no existía y se creó ahora. En producción, que esto sea true en
+   * cada arranque significa que el archivo no está sobre un disco persistente.
+   */
+  readonly isNew: boolean;
+
   constructor(file: string) {
+    this.isNew = file === ':memory:' || !existsSync(file);
     if (file !== ':memory:') {
       mkdirSync(dirname(file), { recursive: true });
     }
