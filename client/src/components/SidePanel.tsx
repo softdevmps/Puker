@@ -37,6 +37,8 @@ export function SidePanel({ logs, chat, open, onClose, onSendChat }: Props) {
   };
 
   return (
+    <>
+    {open ? <div className="panel__backdrop" onClick={onClose} aria-hidden="true" /> : null}
     <aside className={`panel${open ? ' panel--open' : ''}`}>
       <div className="panel__tabs">
         <button
@@ -94,5 +96,6 @@ export function SidePanel({ logs, chat, open, onClose, onSendChat }: Props) {
         </>
       )}
     </aside>
+    </>
   );
 }

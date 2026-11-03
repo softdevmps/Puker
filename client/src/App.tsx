@@ -135,7 +135,7 @@ export function App() {
       />
 
       <VoiceWarning voice={voice} />
-      <TournamentPanel state={state} onRebuy={game.rebuy} onWithdraw={game.withdraw} />
+      <TournamentPanel state={state} onRebuy={game.rebuy} onWithdraw={game.withdraw} onExit={game.exitRoom} />
 
       <main className="main">
         <TableView

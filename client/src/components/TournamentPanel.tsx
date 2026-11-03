@@ -3,10 +3,12 @@ import { formatPesos, formatStack, type GameState, type TournamentResult } from 
 import { AliasCopy } from './AliasCopy';
 import { Avatar } from './Avatar';
 
-export function TournamentPanel({ state, onRebuy, onWithdraw }: {
+export function TournamentPanel({ state, onRebuy, onWithdraw, onExit }: {
   state: GameState;
   onRebuy(): Promise<void>;
   onWithdraw(): Promise<void>;
+  /** Terminada la partida, lo que uno quiere es irse: se ofrece acá mismo. */
+  onExit(): void;
 }) {
   const [open, setOpen] = useState(false);
   const [dismissed, setDismissed] = useState<string | null>(null);
@@ -17,6 +19,7 @@ export function TournamentPanel({ state, onRebuy, onWithdraw }: {
   const mustDecide = you?.status === 'rebuy';
   const result = match?.result;
   const showResult = !!result && (open || dismissed !== result.id);
+  const close = () => { setOpen(false); setDismissed(result?.id ?? null); };
   const decide = async (action: () => Promise<void>) => {
     setBusy(true);
     try { await action(); } catch { /* useGame muestra el error. */ }
@@ -48,11 +51,11 @@ export function TournamentPanel({ state, onRebuy, onWithdraw }: {
         </div>
       ) : showResult || open ? (
         <div className="modal" role="dialog" aria-modal="true" aria-labelledby="tournament-title">
-          <div className="modal__backdrop" onClick={() => { setOpen(false); setDismissed(result?.id ?? null); }} />
+          <div className="modal__backdrop" onClick={close} />
           <div className="modal__card tournament-modal">
             <header className="modal__head">
               <h2 id="tournament-title">{result ? 'Reparto final' : 'Aportes de la partida'}</h2>
-              <button type="button" className="btn btn--icon" aria-label="Cerrar reparto" onClick={() => { setOpen(false); setDismissed(result?.id ?? null); }}>×</button>
+              <button type="button" className="btn btn--icon" aria-label="Cerrar reparto" onClick={close}>×</button>
             </header>
             <div className="modal__body tournament-details">
               {result ? <TournamentResultDetails result={result} /> : <>
@@ -62,6 +65,12 @@ export function TournamentPanel({ state, onRebuy, onWithdraw }: {
                 <p>Cuando queden dos jugadores, el pozo completo se reparte según sus fichas. Las recompras pendientes se resuelven primero.</p>
               </>}
             </div>
+            {result ? (
+              <footer className="modal__foot">
+                <button type="button" className="btn btn--ghost" onClick={close}>Seguir en la mesa</button>
+                <button type="button" className="btn btn--primary" onClick={onExit}>Salir de la sala</button>
+              </footer>
+            ) : null}
           </div>
         </div>
       ) : null}
