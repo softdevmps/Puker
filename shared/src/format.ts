@@ -66,8 +66,10 @@ export function checkUsername(raw: string): { ok: boolean; error?: string } {
 }
 
 export function sanitizeChat(raw: string): string {
-  return raw
-    .replace(/[\u0000-\u001f\u007f-\u009f]/g, '')
-    .trim()
-    .slice(0, 240);
+  const clean = raw.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim();
+  if (clean.length <= 240) return clean;
+  // Cortar justo en 240 puede partir un emoji al medio y dejar media letra
+  // suelta, que se ve como un rombo con un signo de pregunta.
+  const cut = clean.slice(0, 240);
+  return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
 }

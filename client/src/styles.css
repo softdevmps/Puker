@@ -1211,10 +1211,70 @@ input[type='range'] {
 }
 
 .panel__compose {
+  position: relative;
   display: flex;
   gap: 6px;
   padding: 8px;
   border-top: 1px solid var(--line);
+}
+
+.panel__emoji {
+  flex: 0 0 auto;
+  width: 40px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.panel__emoji--on {
+  border-color: var(--gold);
+  background: rgba(232, 187, 90, 0.14);
+}
+
+/* Se abre por encima del campo, no al costado: el panel es angosto. */
+.emojis {
+  position: absolute;
+  right: 8px;
+  bottom: 100%;
+  left: 8px;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 2px;
+  max-height: 210px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px 12px 0 0;
+  background: var(--surface-2);
+  box-shadow: 0 -12px 30px rgba(0, 0, 0, 0.45);
+}
+
+.emojis__pick {
+  padding: 6px 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 20px;
+  line-height: 1.1;
+}
+
+.emojis__pick:hover,
+.emojis__pick:focus-visible {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+/* Un mensaje de puros emojis se lee mejor grande. */
+.chat--emoji {
+  font-size: 30px;
+  line-height: 1.25;
+}
+
+.chat--emoji strong {
+  font-size: 13.5px;
+  vertical-align: middle;
 }
 
 .panel__compose input {

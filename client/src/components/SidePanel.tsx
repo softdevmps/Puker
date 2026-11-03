@@ -12,10 +12,26 @@ interface Props {
   onChatSeen(lastId: number): void;
 }
 
+/** Los de siempre en una mesa entre amigos: festejo, bronca, cartas y plata. */
+const EMOJIS = [
+  '😂', '😅', '😭', '😱', '🤔', '😎', '🤑', '😈',
+  '🥳', '😡', '🤬', '🥶', '🤡', '💀', '🤯', '🤷',
+  '👏', '🙌', '👍', '👎', '🤝', '🙏', '💪', '👀',
+  '🔥', '❤️', '🍀', '🏆', '💰', '💸', '🃏', '🎲',
+  '♠️', '♥️', '♦️', '♣️', '🍺', '🧉', '⏳', '😴',
+];
+
+/** Un mensaje de puros emojis se muestra en grande, como en cualquier chat. */
+function isAllEmoji(text: string): boolean {
+  return /\p{Extended_Pictographic}/u.test(text) && !/[\p{L}\p{N}]/u.test(text);
+}
+
 export function SidePanel({ logs, chat, open, onClose, onSendChat, onChatSeen }: Props) {
   const [tab, setTab] = useState<'log' | 'chat'>('log');
   const [draft, setDraft] = useState('');
+  const [emojisOpen, setEmojisOpen] = useState(false);
   const body = useRef<HTMLDivElement | null>(null);
+  const field = useRef<HTMLInputElement | null>(null);
 
   // Lo último, abajo. Se mueve `scrollTop` y no `scrollIntoView`: este arrastra
   // también a los padres, y como la mesa los recorta con `overflow: hidden`, la
@@ -39,11 +55,19 @@ export function SidePanel({ logs, chat, open, onClose, onSendChat, onChatSeen }:
     const text = draft.trim();
     if (!text) return;
     setDraft('');
+    setEmojisOpen(false);
     try {
       await onSendChat(text);
     } catch {
       // El toast de error ya lo muestra useGame.
     }
+  };
+
+  // Se agrega al final y el foco vuelve al campo: así se encadenan varios sin
+  // tener que volver a tocar el cuadro de texto cada vez.
+  const addEmoji = (emoji: string) => {
+    setDraft((prev) => (prev + emoji).slice(0, 240));
+    field.current?.focus();
   };
 
   return (
@@ -84,14 +108,40 @@ export function SidePanel({ logs, chat, open, onClose, onSendChat, onChatSeen }:
           <div className="panel__body" ref={body}>
             {chat.length === 0 ? <p className="panel__empty">Decile algo a la mesa.</p> : null}
             {chat.map((message) => (
-              <p key={message.id} className="chat">
+              <p key={message.id} className={`chat${isAllEmoji(message.text) ? ' chat--emoji' : ''}`}>
                 <strong>{message.from}:</strong> {message.text}
               </p>
             ))}
           </div>
 
           <form className="panel__compose" onSubmit={submit}>
+            {emojisOpen ? (
+              <div className="emojis" role="group" aria-label="Emojis">
+                {EMOJIS.map((emoji) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    className="emojis__pick"
+                    onClick={() => addEmoji(emoji)}
+                    aria-label={`Agregar ${emoji}`}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className={`panel__emoji${emojisOpen ? ' panel__emoji--on' : ''}`}
+              onClick={() => setEmojisOpen((shown) => !shown)}
+              aria-expanded={emojisOpen}
+              aria-label="Emojis"
+              title="Emojis"
+            >
+              😀
+            </button>
             <input
+              ref={field}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               placeholder="Escribí un mensaje"

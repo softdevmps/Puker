@@ -198,6 +198,27 @@ export function useVoice(options: {
     [socket, notify, dropPeer, makeAnalyser],
   );
 
+  /**
+   * Le ofrece conexión a cada uno de los que ya estaban. El que llega es el que
+   * ofrece: así cada par tiene un único iniciador y no hay ofertas cruzadas.
+   */
+  const offerTo = useCallback(
+    async (existing: VoicePeer[]) => {
+      if (!socket) return;
+      for (const remote of existing) {
+        const connection = ensurePeer(remote.playerId);
+        connection.name = remote.name;
+        const offer = await connection.pc.createOffer();
+        await connection.pc.setLocalDescription(offer);
+        await request(socket, 'voice:signal', {
+          to: remote.playerId,
+          data: { kind: 'offer', sdp: connection.pc.localDescription },
+        });
+      }
+    },
+    [socket, ensurePeer],
+  );
+
   const stop = useCallback(() => {
     activeRef.current = false;
     for (const playerId of [...peers.current.keys()]) dropPeer(playerId);
@@ -234,23 +255,19 @@ export function useVoice(options: {
 
       iceConfig.current = await request<IceConfig>(socket, 'voice:config');
 
-      // El que llega ofrece a todos los que ya estaban: un único iniciador
-      // por par, sin riesgo de ofertas cruzadas.
       const existing = await request<VoicePeer[]>(socket, 'voice:join');
       activeRef.current = true;
       setActive(true);
       setParticipants(new Set([youId]));
+      await offerTo(existing);
 
-      for (const remote of existing) {
-        const connection = ensurePeer(remote.playerId);
-        connection.name = remote.name;
-        const offer = await connection.pc.createOffer();
-        await connection.pc.setLocalDescription(offer);
-        await request(socket, 'voice:signal', {
-          to: remote.playerId,
-          data: { kind: 'offer', sdp: connection.pc.localDescription },
-        });
-      }
+      // Sin esto, entrar solo al audio no se distingue de que no funcione.
+      notify(
+        existing.length > 0 ? 'success' : 'info',
+        existing.length > 0
+          ? `Estás hablando con ${existing.map((peer) => peer.name).join(', ')}`
+          : 'Micrófono abierto. Todavía no hay nadie más: decíles que toquen el suyo.',
+      );
     } catch (caught) {
       const message = describeMicError(caught);
       setError(message);
@@ -259,7 +276,43 @@ export function useVoice(options: {
     } finally {
       setConnecting(false);
     }
-  }, [socket, youId, ensurePeer, makeAnalyser, notify, stop]);
+  }, [socket, youId, offerTo, makeAnalyser, notify, stop]);
+
+  /**
+   * Al cortarse el socket el servidor te saca del audio, y al reconectar nada
+   * te vuelve a anotar: el micrófono quedaba encendido en pantalla pero nadie
+   * podía llamarte nunca más. Acá se rehace la conversación entera.
+   */
+  const rejoin = useCallback(async () => {
+    if (!socket || !activeRef.current) return;
+    for (const playerId of [...peers.current.keys()]) dropPeer(playerId);
+    setParticipants(new Set([youId]));
+
+    // La sala se rearma un instante después de reconectar, así que se reintenta
+    // hasta que el servidor vuelva a reconocernos adentro.
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        iceConfig.current = await request<IceConfig>(socket, 'voice:config');
+        await offerTo(await request<VoicePeer[]>(socket, 'voice:join'));
+        return;
+      } catch {
+        await new Promise((resume) => setTimeout(resume, 600));
+      }
+    }
+    notify('error', 'Se perdió el audio al reconectar. Tocá el micrófono para volver.');
+    stop();
+  }, [socket, youId, dropPeer, offerTo, notify, stop]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const onConnect = () => {
+      if (activeRef.current) void rejoin();
+    };
+    socket.on('connect', onConnect);
+    return () => {
+      socket.off('connect', onConnect);
+    };
+  }, [socket, rejoin]);
 
   const toggleMute = useCallback(() => {
     const next = !muted;
@@ -322,6 +375,9 @@ export function useVoice(options: {
 
       try {
         if (message.kind === 'offer') {
+          // Solo se ofrece al entrar: si ya había conexión con ese par, es que
+          // volvió de una caída. Se tira la vieja antes de rehacerla.
+          if (peers.current.has(from)) dropPeer(from);
           const connection = ensurePeer(from);
           await connection.pc.setRemoteDescription(message.sdp);
           const answer = await connection.pc.createAnswer();
