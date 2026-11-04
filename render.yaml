@@ -24,6 +24,20 @@ services:
         value: /var/data/puker.db
       - key: SESSION_SECRET
         generateValue: true
+      # Voz: el TURN NO puede vivir acá. Render publica un puerto HTTP y
+      # coturn necesita UDP y un rango de puertos para los relays. Va aparte:
+      # un servicio de TURN contratado, o un coturn en una máquina chica.
+      # Con un servicio contratado se completan estas tres en el panel:
+      - key: TURN_URLS
+        sync: false
+      - key: TURN_USERNAME
+        sync: false
+      - key: TURN_PASSWORD
+        sync: false
+      # Con un coturn propio, en lugar de usuario y clave va el secreto
+      # compartido y las credenciales se firman solas:
+      - key: TURN_SECRET
+        sync: false
     disk:
       name: puker-data
       mountPath: /var/data
