@@ -30,11 +30,15 @@ if (config.isProduction && !pinnedOrigin) {
   );
 }
 console.log(`  Login con Google: ${config.google.enabled ? 'activado' : 'desactivado'}`);
+const turnListo = config.voice.turnUrls.length > 0
+  && Boolean(config.voice.turnSecret || (config.voice.turnUsername && config.voice.turnPassword));
 console.log(
-  `  Voz: STUN ${config.voice.stunUrls.length} servidor(es), TURN ${
-    config.voice.turnUrls.length > 0 && config.voice.turnSecret ? 'configurado' : 'SIN configurar'
-  }`,
+  `  Voz: STUN ${config.voice.stunUrls.length} servidor(es), TURN ${turnListo ? 'configurado' : 'SIN configurar'}`,
 );
+if (!turnListo) {
+  console.warn('  Sin TURN, el audio falla entre quienes tengan un router exigente o datos móviles.');
+  console.warn('  Ver TURN_URLS en .env.example.');
+}
 console.log('');
 
 let closing = false;

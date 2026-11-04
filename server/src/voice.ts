@@ -30,16 +30,17 @@ export function buildIceConfig(playerId: string): IceConfig {
     iceServers.push({ urls: config.voice.stunUrls });
   }
 
-  const hasTurn = config.voice.turnUrls.length > 0 && Boolean(config.voice.turnSecret);
+  const { turnUrls, turnSecret, turnUsername, turnPassword } = config.voice;
+  const hasTurn = turnUrls.length > 0 && Boolean(turnSecret || (turnUsername && turnPassword));
 
-  if (hasTurn) {
+  if (hasTurn && turnSecret) {
     const expiry = Math.floor(Date.now() / 1000) + config.voice.turnTtlSec;
     const username = `${expiry}:${playerId}`;
-    const credential = createHmac('sha1', config.voice.turnSecret)
-      .update(username)
-      .digest('base64');
-
-    iceServers.push({ urls: config.voice.turnUrls, username, credential });
+    const credential = createHmac('sha1', turnSecret).update(username).digest('base64');
+    iceServers.push({ urls: turnUrls, username, credential });
+  } else if (hasTurn) {
+    // Un TURN contratado suele dar usuario y clave fijos y listo.
+    iceServers.push({ urls: turnUrls, username: turnUsername, credential: turnPassword });
   }
 
   return { iceServers, hasTurn };

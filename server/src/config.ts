@@ -98,6 +98,13 @@ export const config = {
      * credenciales temporales con HMAC en vez de usuarios fijos.
      */
     turnSecret: env('TURN_SECRET', ''),
+    /**
+     * Usuario y clave fijos, para un TURN contratado que no use secreto
+     * compartido. Solo se miran si no hay `TURN_SECRET`: las credenciales
+     * temporales son mejores porque caducan solas.
+     */
+    turnUsername: env('TURN_USERNAME', ''),
+    turnPassword: env('TURN_PASSWORD', ''),
     /** Validez de las credenciales TURN, en segundos. */
     turnTtlSec: Number(env('TURN_TTL_SEC', '14400')),
   },
