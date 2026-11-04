@@ -276,13 +276,10 @@ export function useVoice(options: {
           return;
         }
 
-        // Casi siempre es NAT estricto (datos móviles) sin TURN disponible.
-        notify(
-          'error',
-          iceConfig.current?.hasTurn
-            ? `Se cortó el audio con ${peer.name}`
-            : `No se pudo conectar el audio con ${peer.name}: falta un servidor TURN.`,
-        );
+        // Casi siempre es una de las dos redes que no deja pasar la conexión
+        // directa. El motivo técnico no le sirve a nadie en medio de una mano:
+        // alcanza con saber con quién se perdió el audio.
+        notify('error', `No se pudo armar el audio con ${peer.name}`);
         setUnreachable((prev) => new Set(prev).add(playerId));
         dropPeer(playerId);
       };
