@@ -817,3 +817,87 @@ test('la subida corta tiene piso de una ciega grande', () => {
   assert.equal(legalCorto.minRaiseTo, 13_400, 'el piso se recorta al stack');
   assert.equal(legalCorto.raiseIsAllIn, true, 'y entonces sí es all-in o nada');
 });
+
+// ------------------------------------------- ciegas por reloj y por vueltas
+
+/** Juega la mano y deja repartida la siguiente, consumiendo `ms` de reloj. */
+function manoConReloj(h: Harness, reloj: { ahora: number }, ms: number): void {
+  let guard = 0;
+  while (h.table.isHandLive() && guard++ < 80) {
+    const playerId = h.current();
+    if (!playerId) break;
+    const legal = h.table.legalActions(seatOf(h, playerId))!;
+    h.table.act(playerId, legal.canCheck ? { type: 'check' } : { type: 'call' });
+  }
+  reloj.ahora += ms;
+  h.table.tick(reloj.ahora);
+}
+
+test('por reloj, las ciegas suben al cumplirse los minutos', () => {
+  const h = makeTable(3, { startingStack: 1_000_000, blindMode: 'time', blindEvery: 1 });
+  h.table.start(h.ids[0]!);
+  const reloj = { ahora: Date.now() };
+
+  const niveles: number[] = [];
+  const ciegas: string[] = [];
+  for (let mano = 0; mano < 10; mano++) {
+    const { blinds } = h.table.getStateFor(h.ids[0]!);
+    niveles.push(blinds.level);
+    ciegas.push(`${blinds.small}/${blinds.big}`);
+    manoConReloj(h, reloj, 10_000); // cada mano se come diez segundos
+  }
+
+  // La primera lectura del reloj solo fija el punto de partida, así que el
+  // minuto se cumple recién después de siete manos de diez segundos.
+  assert.deepEqual(niveles, [1, 1, 1, 1, 1, 1, 1, 2, 2, 2], 'sube al cumplirse el minuto');
+  assert.equal(ciegas[0], '10/20');
+  assert.equal(ciegas[7], '20/40');
+});
+
+test('por reloj, la pausa congela la cuenta de la ronda', () => {
+  const h = makeTable(3, { startingStack: 1_000_000, blindMode: 'time', blindEvery: 1 });
+  h.table.start(h.ids[0]!);
+  const reloj = { ahora: Date.now() };
+  manoConReloj(h, reloj, 10_000); // fija el punto de partida
+
+  h.table.pause(h.ids[0]!);
+  for (let i = 0; i < 10; i++) { reloj.ahora += 60_000; h.table.tick(reloj.ahora); }
+  h.table.start(h.ids[0]!);
+
+  assert.equal(
+    h.table.getStateFor(h.ids[0]!).blinds.level,
+    1,
+    'diez minutos en pausa no cuentan para la ronda',
+  );
+  assert.equal(h.table.getStateFor(h.ids[0]!).blinds.levelEndsAt !== null, true, 'y el reloj vuelve a correr');
+});
+
+test('por reloj no se muestra cuenta de manos, y en pausa no hay vencimiento', () => {
+  const h = makeTable(3, { startingStack: 1_000_000, blindMode: 'time', blindEvery: 5 });
+  h.table.start(h.ids[0]!);
+  const { blinds } = h.table.getStateFor(h.ids[0]!);
+  assert.equal(blinds.mode, 'time');
+  assert.equal(blinds.handsLeft, 0, 'la cuenta de manos no aplica por reloj');
+
+  h.table.pause(h.ids[0]!);
+  h.table.tick(Date.now());
+  assert.equal(h.table.getStateFor(h.ids[0]!).blinds.levelEndsAt, null, 'en pausa no corre el reloj');
+});
+
+test('por vueltas se puede pedir que suban cada dos', () => {
+  const h = makeTable(3, { startingStack: 1_000_000, blindEvery: 2 });
+  h.table.start(h.ids[0]!);
+
+  const ciegas: string[] = [];
+  for (let mano = 0; mano < 7; mano++) {
+    ciegas.push(`${h.table.getStateFor(h.ids[0]!).blinds.small}`);
+    playOutHand(h);
+  }
+
+  assert.deepEqual(
+    ciegas,
+    ['10', '10', '10', '10', '10', '10', '20'],
+    'con tres jugadores, dos vueltas son seis manos',
+  );
+  assert.equal(h.table.getStateFor(h.ids[0]!).blinds.handsPerLevel, 6);
+});

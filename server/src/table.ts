@@ -22,6 +22,7 @@ import {
   type Pot,
   type PotView,
   type PublicPlayer,
+  type BlindMode,
   type BlindsView,
   type ShowdownEntry,
   type TableSettings,
@@ -140,8 +141,12 @@ export class Table {
   blindLevel = 1;
   /** Manos ya repartidas en esta ronda. */
   private handsIntoLevel = 0;
-  /** Cuánto dura la ronda: una vuelta entera, o sea un reparto por jugador. */
+  /** Cuánto dura la ronda: tantas vueltas como diga la configuración. */
   private handsPerLevel = 0;
+  /** Modo por reloj: milisegundos ya jugados de esta ronda. */
+  private levelElapsedMs = 0;
+  /** Última lectura del reloj, o null si está detenido. */
+  private levelClockAt: number | null = null;
 
   /** Se dispara al cerrar cada mano, para persistir el resultado. */
   onHandComplete: ((record: HandRecord) => void) | null = null;
@@ -195,15 +200,36 @@ export class Table {
     return !this.blindsFit(2 ** this.blindLevel);
   }
 
+  /** Cuánto dura una ronda por reloj, en milisegundos. */
+  private get levelDurationMs(): number {
+    return this.settings.blindEvery * 60_000;
+  }
+
+  /**
+   * El reloj de la ronda corre solo mientras se juega de verdad: en pausa, o
+   * esperando que alguien decida su recompra, se congela. Si no, una pausa
+   * para ir a buscar algo se comería un par de niveles.
+   */
+  private blindClockRunning(): boolean {
+    return this.running && this.match?.status !== 'awaiting-rebuy';
+  }
+
   private blindsView(): BlindsView {
     const { small, big } = this.blinds;
+    const porReloj = this.settings.blindMode === 'time';
     return {
       small,
       big,
+      mode: this.settings.blindMode,
+      levelEndsAt: porReloj && !this.blindsCapped && this.blindClockRunning()
+        ? Date.now() + Math.max(0, this.levelDurationMs - this.levelElapsedMs)
+        : null,
       level: this.blindLevel,
       // Se cuenta la mano que se está jugando: es lo que uno espera leer.
       // Repartida la última de la ronda, da 0 y la próxima ya sube.
-      handsLeft: Math.max(0, this.handsPerLevel - this.handsIntoLevel + (this.inPlay() ? 1 : 0)),
+      handsLeft: porReloj
+        ? 0
+        : Math.max(0, this.handsPerLevel - this.handsIntoLevel + (this.inPlay() ? 1 : 0)),
       handsPerLevel: this.handsPerLevel,
       capped: this.blindsCapped,
     };
@@ -427,6 +453,10 @@ export class Table {
   private normalizeSettings(): void {
     const s = this.settings;
     s.tournament = Boolean(s.tournament);
+    s.blindMode = s.blindMode === 'time' ? 'time' : 'orbit';
+    s.blindEvery = s.blindMode === 'time'
+      ? clampInt(s.blindEvery, 1, 120, 10)   // minutos
+      : clampInt(s.blindEvery, 1, 10, 1);    // vueltas de la mesa
     s.entryFee = clampInt(s.entryFee, 1, 1_000_000, DEFAULT_SETTINGS.entryFee);
     s.rebuyFee = clampInt(s.rebuyFee, 1, 1_000_000, DEFAULT_SETTINGS.rebuyFee);
     s.chipUnit = s.chipUnit === 1 ? 1 : DEFAULT_SETTINGS.chipUnit;
@@ -511,17 +541,23 @@ export class Table {
       return;
     }
 
-    // Las ciegas se duplican cuando el botón da la vuelta entera: la ronda dura
-    // tantas manos como jugadores haya, así cada uno reparte una vez por ronda.
+    // Las ciegas suben al dar la vuelta el reparto, o contra reloj. Nunca en
+    // medio de una mano: siempre al repartir la siguiente.
+    const porReloj = this.settings.blindMode === 'time';
+    const vueltaCompleta = this.handsPerLevel > 0 && this.handsIntoLevel >= this.handsPerLevel;
+    const tiempoCumplido = this.levelElapsedMs >= this.levelDurationMs;
+
     if (this.handsPerLevel === 0) {
-      this.handsPerLevel = eligible.length;
-    } else if (this.handsIntoLevel >= this.handsPerLevel) {
+      this.handsPerLevel = eligible.length * this.settings.blindEvery;
+    } else if (porReloj ? tiempoCumplido : vueltaCompleta) {
       this.handsIntoLevel = 0;
-      this.handsPerLevel = eligible.length;
+      this.levelElapsedMs = 0;
+      this.handsPerLevel = eligible.length * this.settings.blindEvery;
       if (!this.blindsCapped) {
         this.blindLevel++;
+        const motivo = porReloj ? 'Se cumplió el tiempo' : 'Dio la vuelta el reparto';
         this.addLog(
-          `Dio la vuelta el reparto: las ciegas pasan a ${formatChips(this.blinds.small)}/${formatChips(this.blinds.big)}`,
+          `${motivo}: las ciegas pasan a ${formatChips(this.blinds.small)}/${formatChips(this.blinds.big)}`,
           'system',
         );
       }
@@ -1214,6 +1250,17 @@ export class Table {
    */
   tick(now = Date.now()): boolean {
     let changed = false;
+
+    // Reloj de la ronda de ciegas. Se acumula lo jugado en vez de guardar un
+    // vencimiento fijo: así una pausa lo congela sin cuentas raras.
+    if (this.settings.blindMode === 'time') {
+      if (this.blindClockRunning()) {
+        if (this.levelClockAt !== null) this.levelElapsedMs += Math.max(0, now - this.levelClockAt);
+        this.levelClockAt = now;
+      } else {
+        this.levelClockAt = null;
+      }
+    }
 
     // Asientos abandonados.
     for (let i = 0; i < this.seats.length; i++) {

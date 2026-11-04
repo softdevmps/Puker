@@ -31,3 +31,21 @@ export function useCountdown(deadline: number | null, totalMs: number): Countdow
     seconds: Math.ceil(remaining / 1000),
   };
 }
+
+/**
+ * Segundos que faltan hasta `deadline`, refrescados una vez por segundo. Para
+ * cuentas largas donde no hace falta la precisión del reloj del turno.
+ */
+export function useSecondsLeft(deadline: number | null): number | null {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (deadline === null) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [deadline]);
+
+  if (deadline === null) return null;
+  return Math.max(0, Math.ceil((deadline - now) / 1000));
+}

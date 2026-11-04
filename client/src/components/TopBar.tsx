@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import { formatChips, formatPesos, type GameState } from '@puker/shared';
 
+import { useSecondsLeft } from '../lib/useCountdown';
 import type { VoiceApi } from '../lib/useVoice';
 import { VoiceBar } from './VoiceBar';
 
@@ -44,6 +45,15 @@ export function TopBar({
   onNotify,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
+  // El vencimiento viene en reloj del servidor: se pasa al local una sola vez
+  // por estado recibido, para que la cuenta no se reinicie en cada dibujo.
+  const blindDeadline = useMemo(
+    () => (state.blinds.levelEndsAt === null
+      ? null
+      : Date.now() + (state.blinds.levelEndsAt - state.serverNow)),
+    [state.blinds.levelEndsAt, state.serverNow],
+  );
+  const blindSeconds = useSecondsLeft(state.blinds.mode === 'time' ? blindDeadline : null);
   const you = state.players.find((player) => player.seat === state.youSeat);
   const isHost = state.hostId !== null && state.hostId === state.youId;
   const canStart = isHost && !state.running && state.tournament?.status !== 'finished';
@@ -51,12 +61,21 @@ export function TopBar({
   const enoughPlayers = state.players.filter((p) => p.chips > 0 && p.status !== 'sitting-out').length >= minimumPlayers;
   const entry = state.tournament?.participants.find((p) => p.id === state.youId);
   // El aviso de las ciegas solo tiene sentido con la partida en marcha.
-  const showBlindCountdown = state.running && !state.blinds.capped && state.handNumber > 0;
+  const byClock = state.blinds.mode === 'time';
+  const showBlindCountdown = state.running && !state.blinds.capped && state.handNumber > 0
+    && (byClock ? blindSeconds !== null : true);
+  // Cumplido el tiempo, el reloj se queda en cero hasta que termine la mano:
+  // las ciegas nunca cambian en el medio. Se dice, en vez de mostrar 0:00 fijo.
+  const blindCountdown = byClock
+    ? (blindSeconds ?? 0) === 0 ? 'suben ya' : clock(blindSeconds ?? 0)
+    : state.blinds.handsLeft === 0 ? 'suben ya' : `faltan ${state.blinds.handsLeft}`;
   const blindsTitle = state.blinds.capped
     ? `Ciegas ${formatChips(state.blinds.small)}/${formatChips(state.blinds.big)}. Ya no suben más.`
-    : state.blinds.handsLeft === 0
-      ? 'Las ciegas se duplican en la próxima mano'
-      : `Las ciegas se duplican en ${state.blinds.handsLeft} ${state.blinds.handsLeft === 1 ? 'mano' : 'manos'}, cuando el reparto dé la vuelta a la mesa`;
+    : byClock
+      ? 'Las ciegas se duplican al terminar el tiempo de esta ronda'
+      : state.blinds.handsLeft === 0
+        ? 'Las ciegas se duplican en la próxima mano'
+        : `Las ciegas se duplican en ${state.blinds.handsLeft} ${state.blinds.handsLeft === 1 ? 'mano' : 'manos'}, cuando el reparto dé la vuelta a la mesa`;
   const confirmLeave = () => !entry || !['active', 'rebuy'].includes(entry.status) || window.confirm('¿Retirarte de la partida? Tu aporte queda en el pozo y perdés el derecho a participar del reparto.');
 
   const share = async () => {
@@ -96,7 +115,7 @@ export function TopBar({
             </span>
             {showBlindCountdown ? (
               <span className="topbar__blinds-up" title={blindsTitle}>
-                {state.blinds.handsLeft === 0 ? 'suben ya' : `faltan ${state.blinds.handsLeft}`}
+                {blindCountdown}
               </span>
             ) : null}
             {state.handNumber > 0 ? (
@@ -250,4 +269,10 @@ export function TopBar({
       ) : null}
     </header>
   );
+}
+
+/** Segundos a m:ss, para la cuenta de la ronda de ciegas. */
+function clock(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
 }

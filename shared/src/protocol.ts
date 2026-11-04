@@ -32,7 +32,14 @@ export interface TableSettings {
   maxSeats: number;
   /** Permite una única recarga del stack inicial por jugador y partida. */
   allowRebuy: boolean;
+  /** Si las ciegas suben al dar la vuelta el reparto o contra reloj. */
+  blindMode: BlindMode;
+  /** Cada cuántas vueltas (`orbit`) o cada cuántos minutos (`time`) suben. */
+  blindEvery: number;
 }
+
+/** Cómo se decide que subieron las ciegas. */
+export type BlindMode = 'orbit' | 'time';
 
 export const DEFAULT_SETTINGS: TableSettings = {
   tournament: true,
@@ -45,6 +52,8 @@ export const DEFAULT_SETTINGS: TableSettings = {
   turnTimeSec: 30,
   maxSeats: 6,
   allowRebuy: true,
+  blindMode: 'orbit',
+  blindEvery: 1,
 };
 
 // ------------------------------------------------------------------- cuentas
@@ -209,10 +218,18 @@ export interface BlindsView {
   big: number;
   /** 1 es la ronda inicial, con las ciegas de la configuración. */
   level: number;
-  /** Manos que faltan para que suban, contando la que se juega ahora. */
+  /** Si suben por vueltas de la mesa o por reloj. */
+  mode: BlindMode;
+  /** Modo `orbit`: manos que faltan, contando la que se juega ahora. */
   handsLeft: number;
-  /** Cuántas manos dura la ronda: una vuelta entera de la mesa. */
+  /** Modo `orbit`: cuántas manos dura la ronda. */
   handsPerLevel: number;
+  /**
+   * Modo `time`: epoch ms DEL SERVIDOR en que vence la ronda, o null si el
+   * reloj está detenido (partida en pausa o esperando una recompra). El
+   * cliente lo corrige con `serverNow`, igual que el tiempo del turno.
+   */
+  levelEndsAt: number | null;
   /** Llegaron al tope y ya no suben más. */
   capped: boolean;
 }

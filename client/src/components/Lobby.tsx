@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import { DEFAULT_SETTINGS, type AuthUser, type TableSettings } from '@puker/shared';
+import { DEFAULT_SETTINGS, type AuthUser, type BlindMode, type TableSettings } from '@puker/shared';
 import { ChipSet } from './ChipSet';
 import { Avatar } from './Avatar';
 
@@ -39,6 +39,10 @@ export function Lobby({
   const [allowRebuy, setAllowRebuy] = useState(true);
   const [entryFee, setEntryFee] = useState(DEFAULT_SETTINGS.entryFee);
   const [rebuyFee, setRebuyFee] = useState(DEFAULT_SETTINGS.rebuyFee);
+  const [blindMode, setBlindMode] = useState<BlindMode>(DEFAULT_SETTINGS.blindMode);
+  // Dos números aparte: cambiar de modo no te pisa lo que elegiste en el otro.
+  const [blindOrbits, setBlindOrbits] = useState(1);
+  const [blindMinutes, setBlindMinutes] = useState(10);
 
   const handleCreate = async () => {
     try {
@@ -49,6 +53,8 @@ export function Lobby({
         allowRebuy,
         entryFee,
         rebuyFee,
+        blindMode,
+        blindEvery: blindMode === 'time' ? blindMinutes : blindOrbits,
       });
     } catch (error) {
       onError(error instanceof Error ? error.message : 'No se pudo crear la mesa');
@@ -140,7 +146,7 @@ export function Lobby({
             <div className="field">
               <span className="field__label">Cada uno arranca con 29.000 en fichas</span>
               <ChipSet />
-              <span className="field__hint">Ciegas: $50 y $100. Se duplican cada vez que el reparto da la vuelta a la mesa.</span>
+              <span className="field__hint">Ciegas: $50 y $100.</span>
             </div>
 
             <div className="tournament-fees">
@@ -161,6 +167,62 @@ export function Lobby({
               {maxSeats > 8 ? (
                 <span className="field__hint">Con tantos jugadores la voz puede entrecortarse.</span>
               ) : null}
+            </div>
+
+            <div className="field">
+              <span className="field__label">Las ciegas suben</span>
+              <div className="segmented">
+                <button
+                  type="button"
+                  className={`segmented__option${blindMode === 'orbit' ? ' segmented__option--on' : ''}`}
+                  onClick={() => setBlindMode('orbit')}
+                >
+                  Por vuelta
+                  <small>cuando el reparto da la vuelta</small>
+                </button>
+                <button
+                  type="button"
+                  className={`segmented__option${blindMode === 'time' ? ' segmented__option--on' : ''}`}
+                  onClick={() => setBlindMode('time')}
+                >
+                  Por tiempo
+                  <small>con reloj, como en un torneo</small>
+                </button>
+              </div>
+            </div>
+
+            <div className="field">
+              {blindMode === 'orbit' ? (
+                <>
+                  <span className="field__label">
+                    Cada {blindOrbits === 1 ? 'vuelta' : `${blindOrbits} vueltas`} de la mesa
+                  </span>
+                  <input
+                    type="range"
+                    min={1}
+                    max={5}
+                    value={blindOrbits}
+                    onChange={(event) => setBlindOrbits(Number(event.target.value))}
+                  />
+                  <span className="field__hint">
+                    Una vuelta es un reparto por jugador. Cada vez que suben, se duplican.
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="field__label">Cada {blindMinutes} minutos</span>
+                  <input
+                    type="range"
+                    min={2}
+                    max={30}
+                    value={blindMinutes}
+                    onChange={(event) => setBlindMinutes(Number(event.target.value))}
+                  />
+                  <span className="field__hint">
+                    El reloj se frena si pausan la partida. Cada vez que suben, se duplican.
+                  </span>
+                </>
+              )}
             </div>
 
             <div className="field">
