@@ -85,6 +85,20 @@ export interface VoiceApi {
 }
 
 /**
+ * Dónde está el permiso del sitio, que no es el mismo botón en cada lado. En
+ * el celular no hay ningún candado: Chrome pone unas perillas y Safari la
+ * "aA", así que mandar a todos al candado deja al del teléfono dando vueltas.
+ */
+function whereToAllow(): string {
+  const touch = navigator.maxTouchPoints > 0 && !window.matchMedia('(pointer: fine)').matches;
+  if (!touch) return 'Tocá el candado al lado de la dirección, permití el micrófono y recargá';
+  const apple = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  return apple
+    ? 'Tocá "aA" en la barra de direcciones → Configuración del sitio web → Micrófono → Permitir, y recargá'
+    : 'Tocá el ícono a la izquierda de la dirección → Permisos → Micrófono → Permitir, y recargá';
+}
+
+/**
  * Las razones por las que un navegador no deja usar el micrófono, en orden de
  * probabilidad. Devuelve el problema encontrado, o cadena vacía si no hay.
  */
@@ -98,7 +112,7 @@ async function findBlocker(): Promise<string> {
   try {
     const permission = await navigator.permissions?.query({ name: 'microphone' as PermissionName });
     if (permission?.state === 'denied') {
-      return 'El micrófono está bloqueado para este sitio. Tocá el candado al lado de la dirección, permitilo y recargá la página.';
+      return `El micrófono está bloqueado para este sitio. ${whereToAllow()}.`;
     }
   } catch {
     // Firefox y Safari no siempre saben responder por el micrófono.
@@ -644,7 +658,7 @@ function describeMicError(caught: unknown): string {
   if (!(caught instanceof Error)) return 'No se pudo activar el micrófono';
   switch (caught.name) {
     case 'NotAllowedError':
-      return 'Bloqueaste el micrófono. Habilitalo desde el candado de la barra de direcciones.';
+      return `Bloqueaste el micrófono para este sitio. ${whereToAllow()}.`;
     case 'NotFoundError':
       return 'No encontramos ningún micrófono conectado';
     case 'NotReadableError':
