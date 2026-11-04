@@ -11,8 +11,15 @@ export interface Point {
 }
 
 function onEllipse(displayIndex: number, total: number, radiusX: number, radiusY: number): Point {
-  // Arranca abajo (PI/2) y avanza en sentido horario en pantalla.
-  const angle = Math.PI / 2 - (displayIndex / total) * Math.PI * 2;
+  /*
+   * Arranca abajo (PI/2) y avanza en sentido horario en pantalla, que es el
+   * orden real de juego: estás abajo mirando a la mesa, así que tu izquierda
+   * —la del que te sigue— cae hacia la izquierda de la pantalla.
+   *
+   * Con el signo al revés la mesa giraba para el otro lado y la ciega chica
+   * aparecía a la derecha del botón en vez de a su izquierda.
+   */
+  const angle = Math.PI / 2 + (displayIndex / total) * Math.PI * 2;
   return {
     left: `${50 + radiusX * Math.cos(angle)}%`,
     top: `${50 + radiusY * Math.sin(angle)}%`,
