@@ -120,6 +120,13 @@ export class Table {
 
   private deck: Card[] = [];
   private button: number | null = null;
+  /**
+   * Quién paga cada ciega en la mano en curso. Se guardan para poder marcarlo
+   * en la mesa: con el botón solo, hay que contar asientos para saber quién es
+   * quién, y eso con asientos vacíos o gente de descanso se presta a error.
+   */
+  private sbSeat: number | null = null;
+  private bbSeat: number | null = null;
   private turn: number | null = null;
   private currentBet = 0;
   private lastRaiseSize = 0;
@@ -402,6 +409,8 @@ export class Table {
     this.seats[target] = seat;
     this.seats[from] = null;
     if (this.button === from) this.button = target;
+    if (this.sbSeat === from) this.sbSeat = target;
+    if (this.bbSeat === from) this.bbSeat = target;
   }
 
   private reassignHost(): void {
@@ -440,6 +449,8 @@ export class Table {
       this.seats[free] = seat;
       this.seats[i] = null;
       if (this.button === i) this.button = free;
+      if (this.sbSeat === i) this.sbSeat = free;
+      if (this.bbSeat === i) this.bbSeat = free;
     }
 
     this.addLog(
@@ -599,6 +610,8 @@ export class Table {
     const heads = eligible.length === 2;
     const sbSeat = heads ? this.button! : this.nextInHandFrom(this.button! + 1)!;
     const bbSeat = this.nextInHandFrom(sbSeat + 1)!;
+    this.sbSeat = sbSeat;
+    this.bbSeat = bbSeat;
 
     this.addLog(
       `--- Mano #${this.handNumber} --- Reparte ${this.seats[this.button!]!.name}`,
@@ -1384,6 +1397,9 @@ export class Table {
         cards,
         connected: seat.connected,
         isDealer: this.button === i,
+        // Solo valen mientras haya mano: entre manos no hay ciegas pagadas.
+        isSmallBlind: this.phase !== 'waiting' && this.sbSeat === i,
+        isBigBlind: this.phase !== 'waiting' && this.bbSeat === i,
         isTurn: this.turn === i,
         lastAction: seat.lastAction,
         handLabel,

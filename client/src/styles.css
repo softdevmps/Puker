@@ -859,6 +859,44 @@ input[type='range'] {
   font-weight: 800;
 }
 
+/*
+ * Quién paga cada ciega. Dice el nombre entero y no "SB"/"BB": las iniciales
+ * las entiende el que ya sabe, y el cartel está justo para el que no. Dos
+ * colores bien separados para distinguirlos sin leer, y ninguno dorado, que
+ * es el del botón del repartidor.
+ */
+.seat__blind {
+  display: block;
+  width: fit-content;
+  margin: 3px auto 0;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-family: var(--font-display);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.seat__blind--small {
+  background: linear-gradient(180deg, #8fdcff, #1f9fd8);
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.5), 0 0 10px rgba(79, 195, 247, 0.5);
+  color: #042839;
+}
+
+.seat__blind--big {
+  background: linear-gradient(180deg, #ffa978, #e04a26);
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.5), 0 0 10px rgba(255, 112, 67, 0.55);
+  color: #2d0a02;
+}
+
+/* En tu propio asiento hay lugar de sobra y se lee todo el tiempo. */
+.seat--hero .seat__blind {
+  margin-top: 4px;
+  padding: 2px 10px;
+  font-size: 10px;
+}
+
 .seat__chips {
   color: var(--gold);
   font-family: var(--font-display);

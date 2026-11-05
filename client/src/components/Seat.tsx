@@ -76,6 +76,15 @@ export function Seat({
           {player.isDealer ? <span className="seat__dealer" title="Reparte">D</span> : null}
         </div>
 
+        {player.isSmallBlind || player.isBigBlind ? (
+          <div
+            className={`seat__blind seat__blind--${player.isBigBlind ? 'big' : 'small'}`}
+            title={player.isBigBlind ? 'Ciega grande' : 'Ciega chica'}
+          >
+            {player.isBigBlind ? 'BIG BLIND' : 'SMALL BLIND'}
+          </div>
+        ) : null}
+
         <div className="seat__chips">${formatStack(player.chips)}</div>
 
         {player.handLabel ? <div className="seat__hand">{player.handLabel}</div> : null}

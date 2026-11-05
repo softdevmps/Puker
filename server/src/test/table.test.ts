@@ -901,3 +901,67 @@ test('por vueltas se puede pedir que suban cada dos', () => {
   );
   assert.equal(h.table.getStateFor(h.ids[0]!).blinds.handsPerLevel, 6);
 });
+
+test('la mesa marca quién paga cada ciega, y coincide con lo que puso', () => {
+  const h = makeTable(4, { smallBlind: 10, bigBlind: 20 });
+
+  const quieto = h.table.getStateFor(h.ids[0]!);
+  assert.ok(
+    quieto.players.every((p) => !p.isSmallBlind && !p.isBigBlind),
+    'sin mano en juego no hay ciegas marcadas',
+  );
+
+  h.table.start(h.ids[0]!);
+  const state = h.table.getStateFor(h.ids[0]!);
+  const sb = state.players.filter((p) => p.isSmallBlind);
+  const bb = state.players.filter((p) => p.isBigBlind);
+
+  assert.equal(sb.length, 1, 'una sola ciega chica');
+  assert.equal(bb.length, 1, 'una sola ciega grande');
+  assert.equal(sb[0]!.bet, 10, 'la marcada como chica puso la chica');
+  assert.equal(bb[0]!.bet, 20, 'la marcada como grande puso la grande');
+
+  // El orden real de la mesa: chica a la izquierda del botón, grande después.
+  const vivos = state.players.map((p) => p.seat).sort((a, b) => a - b);
+  const siguiente = (seat: number) => vivos[(vivos.indexOf(seat) + 1) % vivos.length]!;
+  assert.equal(sb[0]!.seat, siguiente(state.dealerSeat!), 'la chica sigue al botón');
+  assert.equal(bb[0]!.seat, siguiente(sb[0]!.seat), 'la grande sigue a la chica');
+  assert.ok(!sb[0]!.isDealer, 'con cuatro, el botón no paga ciega');
+});
+
+test('mano a mano, el botón es la ciega chica', () => {
+  const h = makeTable(2);
+  h.table.start(h.ids[0]!);
+
+  const state = h.table.getStateFor(h.ids[0]!);
+  const sb = state.players.find((p) => p.isSmallBlind)!;
+  const bb = state.players.find((p) => p.isBigBlind)!;
+
+  assert.equal(sb.seat, state.dealerSeat, 'el botón paga la chica');
+  assert.notEqual(bb.seat, state.dealerSeat);
+  assert.equal(sb.bet, 10);
+  assert.equal(bb.bet, 20);
+});
+
+test('las ciegas marcadas se mueven con el botón en la mano siguiente', () => {
+  const h = makeTable(3);
+  h.table.start(h.ids[0]!);
+
+  const leer = () => {
+    const s = h.table.getStateFor(h.ids[0]!);
+    return {
+      sb: s.players.find((p) => p.isSmallBlind)!.seat,
+      bb: s.players.find((p) => p.isBigBlind)!.seat,
+    };
+  };
+  const primera = leer();
+
+  // Se retiran todos menos uno y arranca la mano que sigue.
+  h.act({ type: 'fold' });
+  h.act({ type: 'fold' });
+  h.table.tick(Date.now() + 60_000);
+
+  const segunda = leer();
+  assert.notEqual(segunda.sb, primera.sb, 'la ciega chica cambió de mano');
+  assert.equal(segunda.sb, primera.bb, 'y le tocó a quien venía de pagar la grande');
+});

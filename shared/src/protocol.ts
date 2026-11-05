@@ -142,6 +142,10 @@ export interface PublicPlayer {
   cards: (Card | null)[];
   connected: boolean;
   isDealer: boolean;
+  /** Paga la ciega chica en la mano en curso. */
+  isSmallBlind: boolean;
+  /** Paga la ciega grande en la mano en curso. */
+  isBigBlind: boolean;
   isTurn: boolean;
   /** Texto de la última acción: "Subió a 200", "Pasó"... */
   lastAction: string | null;
