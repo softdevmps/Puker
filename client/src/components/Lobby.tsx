@@ -14,7 +14,6 @@ interface Props {
   onError(message: string): void;
   onShowRanking(): void;
   onShowHistory(): void;
-  onShowBoards(): void;
   onShowProfile(): void;
   onLogout(): void;
 }
@@ -29,7 +28,6 @@ export function Lobby({
   onError,
   onShowRanking,
   onShowHistory,
-  onShowBoards,
   onShowProfile,
   onLogout,
 }: Props) {
@@ -109,9 +107,6 @@ export function Lobby({
               Ver el ranking
             </button>
             <button type="button" className="btn btn--ghost btn--wide" onClick={onShowHistory}>Mis partidas y repartos</button>
-            <button type="button" className="btn btn--ghost btn--wide" onClick={onShowBoards}>
-              Historial de la mesa
-            </button>
           </div>
         ) : null}
 

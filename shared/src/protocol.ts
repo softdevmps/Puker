@@ -238,42 +238,12 @@ export interface BlindsView {
   capped: boolean;
 }
 
-/**
- * Las formas en que puede venir emparejado el board de 5 cartas, con el
- * porcentaje exacto que dicta el mazo. El patrón cuenta cuántas veces se
- * repite cada número, de mayor a menor: "221" es dos parejas y una suelta.
- */
-export const BOARD_SHAPES: { pattern: string; label: string; expected: number }[] = [
-  { pattern: '11111', label: 'Sin nada repetido', expected: 50.7083 },
-  { pattern: '2111', label: 'Una pareja', expected: 42.2569 },
-  { pattern: '221', label: 'Doble par', expected: 4.7539 },
-  { pattern: '311', label: 'Trío', expected: 2.1128 },
-  { pattern: '32', label: 'Full', expected: 0.1441 },
-  { pattern: '41', label: 'Póker', expected: 0.024 },
-];
-
-/** Cuántos de cada 100 flops vienen con pareja o trío. Son 3.796 de 22.100. */
-export const FLOP_PAIRED_EXPECTED = 17.1765;
-
+/** Una mano guardada: solo las cartas que salieron a la mesa. */
 export interface RecordedBoard {
   roomCode: string;
   handNumber: number;
   board: Card[];
   playedAt: number;
-}
-
-/** El historial de boards jugados, contra lo que dice la matemática. */
-export interface BoardStats {
-  /** Manos que llegaron a ver flop. */
-  flops: number;
-  /** De esas, cuántas traían pareja o trío en las tres primeras. */
-  flopsPaired: number;
-  /** Manos que llegaron a mostrar las cinco cartas. */
-  boards: number;
-  /** Cuántas veces salió cada forma, en el orden de `BOARD_SHAPES`. */
-  shapes: Record<string, number>;
-  /** Las últimas manos, para mirarlas a ojo. */
-  recent: RecordedBoard[];
 }
 
 export interface GameState {

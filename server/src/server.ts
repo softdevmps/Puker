@@ -20,7 +20,7 @@ import { Server, type Socket } from 'socket.io';
 
 import {
   type Ack,
-  type BoardStats,
+  type RecordedBoard,
   type GameState,
   type TournamentResult,
   type ClientToServerEvents,
@@ -178,37 +178,34 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
     res.json({ ranking: rows });
   });
 
-  app.get('/api/stats/boards', (_req, res) => {
-    const rows = store.boards();
-    const shapes: Record<string, number> = {};
-    let flops = 0;
-    let flopsPaired = 0;
-    let boards = 0;
+  /**
+   * El historial crudo de las manos: solo las cartas que salieron a la mesa,
+   * sin cuentas ni porcentajes. La idea es bajarlo y analizarlo afuera.
+   * Con ?format=csv sale listo para abrir en una planilla.
+   */
+  app.get('/api/stats/boards', (req, res) => {
+    const user = userFromRequest(req, store);
+    if (!user) { res.status(401).json({ error: 'Necesitás iniciar sesión' }); return; }
 
-    for (const row of rows) {
-      if (row.board.length < 3) continue;
-      flops++;
-      const [a, b, c] = row.board.map((card) => card[0]);
-      if (a === b || b === c || a === c) flopsPaired++;
+    const rows: RecordedBoard[] = store.boards().map((row) => ({
+      roomCode: row.roomCode,
+      handNumber: row.handNumber,
+      board: row.board,
+      playedAt: row.playedAt,
+    }));
 
-      if (row.board.length < 5) continue;
-      boards++;
-      // El patrón cuenta cuántas veces se repite cada número, de mayor a
-      // menor: "221" es doble par, "2111" una sola pareja.
-      const veces = new Map<string, number>();
-      for (const card of row.board) veces.set(card[0]!, (veces.get(card[0]!) ?? 0) + 1);
-      const patron = [...veces.values()].sort((x, y) => y - x).join('');
-      shapes[patron] = (shapes[patron] ?? 0) + 1;
+    if (req.query.format === 'csv') {
+      const lineas = ['fecha,sala,mano,c1,c2,c3,c4,c5'];
+      for (const row of rows) {
+        const cartas = [0, 1, 2, 3, 4].map((i) => row.board[i] ?? '');
+        lineas.push([new Date(row.playedAt).toISOString(), row.roomCode, row.handNumber, ...cartas].join(','));
+      }
+      // CRLF: es lo que esperan Excel y Google Sheets al abrir un CSV.
+      res.type('text/csv; charset=utf-8').send(lineas.join('\r\n'));
+      return;
     }
 
-    const stats: BoardStats = {
-      flops,
-      flopsPaired,
-      boards,
-      shapes,
-      recent: rows.filter((row) => row.board.length >= 3).slice(0, 60),
-    };
-    res.json(stats);
+    res.json({ boards: rows });
   });
 
   app.get('/api/tournaments', (req, res) => {
