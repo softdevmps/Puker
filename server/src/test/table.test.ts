@@ -965,3 +965,44 @@ test('las ciegas marcadas se mueven con el botón en la mano siguiente', () => {
   assert.notEqual(segunda.sb, primera.sb, 'la ciega chica cambió de mano');
   assert.equal(segunda.sb, primera.bb, 'y le tocó a quien venía de pagar la grande');
 });
+
+test('la mano terminada lleva el board que salió, para poder contarlo después', () => {
+  const h = makeTable(3);
+  const anotadas: { handNumber: number; board: string[] }[] = [];
+  h.table.onHandComplete = (record) => {
+    anotadas.push({ handNumber: record.handNumber, board: record.board.slice() });
+  };
+  h.table.start(h.ids[0]!);
+
+  // Todos pasan hasta el river: la mano llega a mostrar las cinco cartas.
+  for (let paso = 0; paso < 40 && h.table.phase !== 'handover'; paso++) {
+    const state = h.table.getStateFor(h.ids[0]!);
+    if (state.turnSeat === null) break;
+    const quien = h.table.seats[state.turnSeat]!.playerId;
+    const legal = h.table.getStateFor(quien).legal!;
+    h.table.act(quien, legal.canCheck ? { type: 'check' } : { type: 'call' });
+  }
+
+  assert.equal(anotadas.length, 1, 'se anotó la mano una sola vez');
+  const board = anotadas[0]!.board;
+  assert.equal(board.length, 5, 'quedaron las cinco cartas');
+  assert.equal(new Set(board).size, 5, 'ninguna carta salió dos veces');
+  // Y ninguna de la mesa puede estar también en la mano de alguien.
+  const enManos = h.table.seats.flatMap((s) => (s ? s.holeCards : []));
+  for (const carta of board) {
+    assert.ok(!enManos.includes(carta), `${carta} está en la mesa y en una mano a la vez`);
+  }
+});
+
+test('una mano que muere preflop no deja board', () => {
+  const h = makeTable(3);
+  const anotadas: string[][] = [];
+  h.table.onHandComplete = (record) => anotadas.push(record.board.slice());
+  h.table.start(h.ids[0]!);
+
+  h.act({ type: 'fold' });
+  h.act({ type: 'fold' });
+
+  assert.equal(anotadas.length, 1);
+  assert.equal(anotadas[0]!.length, 0, 'sin flop no hay cartas que anotar');
+});

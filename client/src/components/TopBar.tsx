@@ -16,6 +16,7 @@ interface Props {
   onToggleMuted(): void;
   onTogglePanel(): void;
   onShowRanking(): void;
+  onShowBoards(): void;
   onShowProfile(): void;
   onStart(): void;
   onPause(): void;
@@ -35,6 +36,7 @@ export function TopBar({
   onToggleMuted,
   onTogglePanel,
   onShowRanking,
+  onShowBoards,
   onShowProfile,
   onStart,
   onPause,
@@ -182,6 +184,17 @@ export function TopBar({
               }}
             >
               🏆 Ver el ranking
+            </button>
+
+            <button
+              type="button"
+              className="sheet__item"
+              onClick={() => {
+                setMenuOpen(false);
+                onShowBoards();
+              }}
+            >
+              🃏 Historial de la mesa
             </button>
 
             <button

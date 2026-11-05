@@ -51,6 +51,14 @@ export interface HandRow {
   playedAt: number;
 }
 
+export interface BoardRow {
+  roomCode: string;
+  handNumber: number;
+  /** Las cartas tal como salieron: "As", "Td"... */
+  board: string[];
+  playedAt: number;
+}
+
 /**
  * `node:sqlite` devuelve filas como `Record<string, SQLOutputValue>`. El
  * esquema es nuestro, así que acá sabemos la forma real de cada fila; este
@@ -136,6 +144,22 @@ const MIGRATIONS: { name: string; sql: string }[] = [
     sql: `
       -- El ranking agrupa por jugador y busca su mano ganadora de mayor bote.
       CREATE INDEX idx_hands_user_won ON hand_results(user_id, won, pot_size);
+    `,
+  },
+  {
+    name: '005-boards',
+    sql: `
+      -- Las cartas que salieron a la mesa, mano por mano. Sirve para contar
+      -- de verdad cada cuánto viene emparejado el flop, en vez de discutirlo
+      -- de memoria. No se guarda quién jugó: acá solo interesan las cartas.
+      CREATE TABLE hand_boards (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        room_code   TEXT    NOT NULL,
+        hand_number INTEGER NOT NULL,
+        board       TEXT    NOT NULL,
+        played_at   INTEGER NOT NULL
+      );
+      CREATE INDEX idx_boards_played ON hand_boards(played_at);
     `,
   },
 ];
@@ -346,6 +370,33 @@ export class Store {
       JOIN tournament_members m ON m.tournament_id = r.id
       WHERE m.user_id = ? ORDER BY r.started_at DESC LIMIT 50`).all(userId) as { record_json: string }[];
     return rows.map((row) => JSON.parse(row.record_json) as TournamentRecord);
+  }
+
+  /**
+   * Anota las cartas que salieron a la mesa en una mano. Las manos que mueren
+   * preflop no se guardan: sin flop no hay nada que contar.
+   */
+  recordBoard(row: BoardRow): void {
+    if (row.board.length < 3) return;
+    this.db
+      .prepare('INSERT INTO hand_boards (room_code, hand_number, board, played_at) VALUES (?, ?, ?, ?)')
+      .run(row.roomCode, row.handNumber, row.board.join(' '), row.playedAt);
+  }
+
+  /**
+   * Todos los boards guardados, del más nuevo al más viejo. El recuento se
+   * hace afuera: acá solo se leen las cartas.
+   */
+  boards(limit = 50_000): BoardRow[] {
+    const rows = this.db
+      .prepare('SELECT room_code, hand_number, board, played_at FROM hand_boards ORDER BY played_at DESC, id DESC LIMIT ?')
+      .all(limit) as { room_code: string; hand_number: number; board: string; played_at: number }[];
+    return rows.map((row) => ({
+      roomCode: row.room_code,
+      handNumber: row.hand_number,
+      board: row.board.split(' ').filter(Boolean),
+      playedAt: row.played_at,
+    }));
   }
 
   /** Guarda todas las filas de una mano en una sola transacción. */

@@ -103,6 +103,8 @@ export interface HandRecord {
   potSize: number;
   playedAt: number;
   players: HandPlayerRecord[];
+  /** Las cartas que llegaron a la mesa. Vacío si la mano murió preflop. */
+  board: Card[];
 }
 
 export class Table {
@@ -1190,6 +1192,7 @@ export class Table {
       handNumber: this.handNumber,
       potSize,
       playedAt: Date.now(),
+      board: this.board.slice(),
       // Se incluye a todos los que recibieron cartas, no solo a los que
       // pusieron fichas: si no, quien se retira preflop sin pagar ciega no
       // sumaría la mano como jugada.

@@ -5,6 +5,7 @@ import { AuthScreen } from './components/AuthScreen';
 import { Lobby } from './components/Lobby';
 import { Profile } from './components/Profile';
 import { Ranking } from './components/Ranking';
+import { BoardStats } from './components/BoardStats';
 import { SidePanel } from './components/SidePanel';
 import { TableView } from './components/TableView';
 import { TopBar } from './components/TopBar';
@@ -19,6 +20,7 @@ export function App() {
   const game = useGame(auth.user !== null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [rankingOpen, setRankingOpen] = useState(false);
+  const [boardsOpen, setBoardsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [seenChatId, setSeenChatId] = useState(0);
@@ -106,6 +108,7 @@ export function App() {
           onError={(message) => notify('error', message)}
           onShowRanking={() => setRankingOpen(true)}
           onShowHistory={() => setHistoryOpen(true)}
+          onShowBoards={() => setBoardsOpen(true)}
           onShowProfile={() => setProfileOpen(true)}
           onLogout={() => void auth.logout()}
         />
@@ -114,6 +117,7 @@ export function App() {
         ) : null}
         <Toasts game={game} />
         {historyOpen ? <TournamentHistory onClose={() => setHistoryOpen(false)} /> : null}
+        {boardsOpen ? <BoardStats onClose={() => setBoardsOpen(false)} /> : null}
         {profileOpen ? <Profile user={auth.user} onSave={auth.updateProfile} onClose={() => setProfileOpen(false)} /> : null}
       </>
     );
@@ -130,6 +134,7 @@ export function App() {
         onToggleMuted={game.toggleMuted}
         onTogglePanel={() => setPanelOpen((open) => !open)}
         onShowRanking={() => setRankingOpen(true)}
+        onShowBoards={() => setBoardsOpen(true)}
         onShowProfile={() => setProfileOpen(true)}
         onStart={() => void game.startGame().catch(() => {})}
         onPause={() => void game.pauseGame().catch(() => {})}
@@ -163,6 +168,7 @@ export function App() {
       <ActionBar state={state} onAct={game.act} />
 
       {rankingOpen ? <Ranking youId={auth.user.id} onClose={() => setRankingOpen(false)} /> : null}
+      {boardsOpen ? <BoardStats onClose={() => setBoardsOpen(false)} /> : null}
       {profileOpen ? <Profile user={auth.user} onSave={auth.updateProfile} onClose={() => setProfileOpen(false)} /> : null}
       <Toasts game={game} />
     </div>

@@ -20,6 +20,7 @@ import { Server, type Socket } from 'socket.io';
 
 import {
   type Ack,
+  type BoardStats,
   type GameState,
   type TournamentResult,
   type ClientToServerEvents,
@@ -124,6 +125,19 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
     } catch (error) {
       console.error('No se pudo guardar el resultado de la mano:', error);
     }
+
+    // Las cartas de la mesa van aparte: no dependen de que haya cuentas, y
+    // sirven para contar cada cuánto viene emparejado el flop de verdad.
+    try {
+      store.recordBoard({
+        roomCode: record.roomCode,
+        handNumber: record.handNumber,
+        board: record.board,
+        playedAt: record.playedAt,
+      });
+    } catch (error) {
+      console.error('No se pudo guardar el board de la mano:', error);
+    }
   };
 
   const app = express();
@@ -162,6 +176,39 @@ export function createPukerServer(options: PukerServerOptions = {}): PukerServer
   app.get('/api/ranking', (_req, res) => {
     const rows: RankingEntry[] = store.ranking(100);
     res.json({ ranking: rows });
+  });
+
+  app.get('/api/stats/boards', (_req, res) => {
+    const rows = store.boards();
+    const shapes: Record<string, number> = {};
+    let flops = 0;
+    let flopsPaired = 0;
+    let boards = 0;
+
+    for (const row of rows) {
+      if (row.board.length < 3) continue;
+      flops++;
+      const [a, b, c] = row.board.map((card) => card[0]);
+      if (a === b || b === c || a === c) flopsPaired++;
+
+      if (row.board.length < 5) continue;
+      boards++;
+      // El patrón cuenta cuántas veces se repite cada número, de mayor a
+      // menor: "221" es doble par, "2111" una sola pareja.
+      const veces = new Map<string, number>();
+      for (const card of row.board) veces.set(card[0]!, (veces.get(card[0]!) ?? 0) + 1);
+      const patron = [...veces.values()].sort((x, y) => y - x).join('');
+      shapes[patron] = (shapes[patron] ?? 0) + 1;
+    }
+
+    const stats: BoardStats = {
+      flops,
+      flopsPaired,
+      boards,
+      shapes,
+      recent: rows.filter((row) => row.board.length >= 3).slice(0, 60),
+    };
+    res.json(stats);
   });
 
   app.get('/api/tournaments', (req, res) => {
